@@ -49,6 +49,7 @@ The backend is already configured with:
    ```
    Name: clara-homework-server
    Environment: Python
+   Root Directory: backend
    Build Command: pip install -r requirements.txt
    Start Command: uvicorn homework_server_rag:app --host 0.0.0.0 --port $PORT
    ```
@@ -129,7 +130,7 @@ The frontend is already configured with:
 - Security headers
 - Environment variable mapping
 
-### 3.2 Deploy to Vercel
+### 3.2 Deploy to Vercel (Dashboard Method)
 
 1. **Connect Repository**:
    - Go to [Vercel Dashboard](https://vercel.com)
@@ -154,6 +155,52 @@ The frontend is already configured with:
    - Click "Deploy"
    - Wait for build to complete
    - Your app will be available at `https://your-project.vercel.app`
+
+### 3.3 Deploy to Vercel (CLI Method) - Recommended
+
+If you're having issues with the dashboard, use the CLI method:
+
+#### Option A: Automated Script (Recommended)
+```bash
+# For Unix/Linux/macOS
+chmod +x deploy-vercel.sh
+./deploy-vercel.sh
+
+# For Windows PowerShell
+.\deploy-vercel.ps1
+```
+
+#### Option B: Manual CLI Steps
+```bash
+# 1. Install Vercel CLI
+npm install -g vercel
+
+# 2. Login to Vercel
+vercel login
+
+# 3. Create .env.local file with your environment variables
+# (See VERCEL_CLI_DEPLOYMENT.md for template)
+
+# 4. Deploy to production
+vercel --prod --env-file .env.local
+```
+
+#### Option C: Step-by-step CLI
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Build project
+npm run build
+
+# 3. Initialize Vercel project (first time only)
+vercel
+
+# 4. Deploy to production
+vercel --prod --env-file .env.local
+```
+
+For detailed CLI instructions, see `VERCEL_CLI_DEPLOYMENT.md`.
 
 ## 🔒 Step 4: Security Configuration
 
