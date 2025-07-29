@@ -1,0 +1,22 @@
+livekit
+livekit-agents[openai,cartesia,deepgram,silero]
+python-dotenv
+# Homework Agent Dependencies
+openai
+fastapi
+uvicorn[standard]
+python-multipart
+
+# RAG System Dependencies
+pinecone>=7.0.0
+tiktoken
+PyPDF2
+python-docx
+Pillow
+pytesseract
+python-multipart
+aiofiles
+
+# Additional utilities
+python-jose[cryptography]
+passlib[bcrypt] 

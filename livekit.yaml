@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: Config
+metadata:
+  name: clara-voice-agent
+  namespace: livekit
+spec:
+  # LiveKit Cloud configuration
+  port: 7880
+  rtc:
+    tcp_port: 7881
+    port_range_start: 50000
+    port_range_end: 50100
+    use_external_ip: true
+  keys:
+    APIkey: your_livekit_api_key_here
+    APISecret: your_livekit_api_secret_here
+  logging:
+    json: true
+    level: info
+  redis:
+    address: localhost:6379
+  room:
+    auto_create: true
+    empty_timeout: 10m
+    max_participants: 20
+  agent:
+    enabled: true
+    agent_config:
+      - name: clara-voice-agent
+        image: livekit/agents:latest
+        env:
+          - name: OPENAI_API_KEY
+            value: your_openai_api_key_here
+          - name: RAG_ENGINE_URL
+            value: https://your-render-backend-url.com
+          - name: USER_ID
+            value: ""
+          - name: CLASS_ID
+            value: ""
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
