@@ -15,6 +15,12 @@ NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
 CLERK_SECRET_KEY=your_clerk_secret_key
 ```
 
+### PostHog Analytics
+```
+NEXT_PUBLIC_POSTHOG_KEY=your_posthog_project_api_key
+NEXT_PUBLIC_POSTHOG_HOST=https://us.posthog.com
+```
+
 ### LiveKit Configuration
 ```
 LIVEKIT_API_KEY=your_livekit_api_key

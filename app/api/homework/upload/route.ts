@@ -91,9 +91,14 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    console.log(`[Upload API] Processing upload for user ${userId}`)
+    console.log(`[Upload API] File details: name=${file.name}, size=${file.size}, type=${file.type}`)
+    console.log(`[Upload API] Folder ID: ${folderId || 'none'}`)
+
     // Validate file
     const validation = validateFile(file)
     if (!validation.isValid) {
+      console.log(`[Upload API] File validation failed: ${validation.error}`)
       return NextResponse.json(
         { error: validation.error },
         { status: 400 }
@@ -101,8 +106,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Read file content
+    console.log(`[Upload API] Reading file content...`)
     const arrayBuffer = await file.arrayBuffer()
     const content = new TextDecoder().decode(arrayBuffer)
+    console.log(`[Upload API] File content length: ${content.length} characters`)
     
     // Prepare request body for Python backend with user_id
     const requestBody = {
@@ -114,7 +121,8 @@ export async function POST(request: NextRequest) {
     
     const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8000'
     
-    console.log(`Uploading file ${file.name} for user ${userId} to folder ${folderId || 'none'}`)
+    console.log(`[Upload API] Uploading file ${file.name} for user ${userId} to folder ${folderId || 'none'}`)
+    console.log(`[Upload API] Backend URL: ${pythonBackendUrl}`)
     
     const response = await fetch(`${pythonBackendUrl}/homework/upload-rag`, {
       method: 'POST',
@@ -125,8 +133,17 @@ export async function POST(request: NextRequest) {
     })
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}))
-      console.error(`Backend upload error: ${response.status} - ${errorData.error || 'Unknown error'}`)
+      const errorText = await response.text()
+      console.error(`[Upload API] Backend upload error: ${response.status} - ${errorText}`)
+      
+      // Try to parse as JSON for better error handling
+      let errorData: { error?: string } = {}
+      try {
+        errorData = JSON.parse(errorText)
+      } catch (e) {
+        errorData = { error: errorText || 'Unknown error' }
+      }
+      
       return NextResponse.json(
         { 
           success: false,
@@ -138,7 +155,8 @@ export async function POST(request: NextRequest) {
 
     const data = await response.json()
     
-    console.log(`Successfully uploaded: ${file.name}`)
+    console.log(`[Upload API] Successfully uploaded: ${file.name}`)
+    console.log(`[Upload API] Response data:`, data)
     
     return NextResponse.json({
       success: true,
@@ -148,7 +166,19 @@ export async function POST(request: NextRequest) {
       message: 'File uploaded and processed successfully'
     })
   } catch (error) {
-    console.error('Error uploading file:', error)
+    console.error('[Upload API] Error uploading file:', error)
+    
+    // Provide more specific error messages
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      return NextResponse.json(
+        { 
+          success: false,
+          error: 'Unable to connect to backend service. Please try again later.'
+        },
+        { status: 503 }
+      )
+    }
+    
     return NextResponse.json(
       { 
         success: false,

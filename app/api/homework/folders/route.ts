@@ -68,6 +68,8 @@ export async function GET(request: NextRequest) {
     // Call the Python backend to get folders from Pinecone
     const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8000'
     
+    console.log(`[Folders API] Fetching folders for user ${userId} from ${pythonBackendUrl}`)
+    
     const response = await fetch(`${pythonBackendUrl}/homework/folders/${userId}`, {
       method: 'GET',
       headers: {
@@ -76,9 +78,10 @@ export async function GET(request: NextRequest) {
     })
 
     if (!response.ok) {
-      console.error('Error fetching folders from backend:', response.status)
+      const errorText = await response.text()
+      console.error(`[Folders API] Backend error (${response.status}):`, errorText)
       return NextResponse.json(
-        { error: 'Failed to fetch folders' },
+        { error: `Failed to fetch folders: ${response.status} ${response.statusText}` },
         { status: 500 }
       )
     }
@@ -90,7 +93,7 @@ export async function GET(request: NextRequest) {
       folders: data.folders || []
     })
   } catch (error) {
-    console.error('Error in GET /api/homework/folders:', error)
+    console.error('[Folders API] Error in GET /api/homework/folders:', error)
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
@@ -141,6 +144,9 @@ export async function POST(request: NextRequest) {
     // Call the Python backend to create folder
     const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8000'
     
+    console.log(`[Folders API] Creating folder for user ${userId} via ${pythonBackendUrl}`)
+    console.log(`[Folders API] Folder data:`, { name: sanitizedName, description: sanitizedDescription })
+    
     const response = await fetch(`${pythonBackendUrl}/homework/folders`, {
       method: 'POST',
       headers: {
@@ -154,21 +160,46 @@ export async function POST(request: NextRequest) {
     })
 
     if (!response.ok) {
-      console.error('Error creating folder:', response.status)
-      return NextResponse.json(
-        { error: 'Failed to create folder' },
-        { status: 500 }
-      )
+      const errorText = await response.text()
+      console.error(`[Folders API] Backend error (${response.status}):`, errorText)
+      
+      // Provide more specific error messages based on status code
+      if (response.status === 500) {
+        return NextResponse.json(
+          { error: 'Backend service error. Please try again later.' },
+          { status: 500 }
+        )
+      } else if (response.status === 503) {
+        return NextResponse.json(
+          { error: 'Backend service temporarily unavailable. Please try again later.' },
+          { status: 503 }
+        )
+      } else {
+        return NextResponse.json(
+          { error: `Failed to create folder: ${response.status} ${response.statusText}` },
+          { status: 500 }
+        )
+      }
     }
 
     const data = await response.json()
+    console.log(`[Folders API] Successfully created folder:`, data.folder)
     
     return NextResponse.json({
       success: true,
       folder: data.folder
     })
   } catch (error) {
-    console.error('Error in POST /api/homework/folders:', error)
+    console.error('[Folders API] Error in POST /api/homework/folders:', error)
+    
+    // Provide more specific error messages
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      return NextResponse.json(
+        { error: 'Unable to connect to backend service. Please try again later.' },
+        { status: 503 }
+      )
+    }
+    
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

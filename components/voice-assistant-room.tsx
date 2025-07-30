@@ -20,9 +20,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Progress } from "@/components/ui/progress"
-import { Home, Folder, Settings, Menu, X, MessageSquare, Monitor, Users, Mic, Volume2, Clock, Trophy, BookOpen } from "lucide-react"
+import { Home, Folder, Settings, Menu, X, MessageSquare, Monitor, Users, Mic, Volume2, Clock, Trophy, BookOpen, Lightbulb } from "lucide-react"
 import Link from "next/link"
 import { useUserTracking } from '@/hooks/use-analytics'
+import { VoiceVisualContent } from '@/components/voice-visual-content'
 
 interface VoiceAssistantRoomProps {
   onEndSession: () => void
@@ -36,6 +37,23 @@ interface SessionSummary {
   classesCovered: string[]
   topicsCovered: string[]
   summaryText: string
+}
+
+interface VisualContent {
+  type: 'diagram' | 'flashcard' | 'quiz' | 'mindmap'
+  title: string
+  description?: string
+  components?: string[]
+  relationships?: string[]
+  cards?: Array<{ front: string; back: string }>
+  questions?: Array<{
+    question: string
+    options: string[]
+    correct_answer: string
+  }>
+  central_topic?: string
+  branches?: Array<{ topic: string; subtopics: string[] }>
+  generated_at: string
 }
 
 // Error Boundary for LiveKit Components
@@ -105,6 +123,12 @@ function VoiceAssistantRoomContent({
   const [sessionSummary, setSessionSummary] = useState<SessionSummary | null>(null)
   const [isSessionEnding, setIsSessionEnding] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  
+  // Visual content state
+  const [currentVisualContent, setCurrentVisualContent] = useState<VisualContent | null>(null)
+  const [visualCommandType, setVisualCommandType] = useState<string>('')
+  const [showVisualContent, setShowVisualContent] = useState(false)
+  
   const { trackUserAction } = useUserTracking()
   
   // Wrap LiveKit hooks in try-catch to handle context errors
@@ -312,6 +336,35 @@ function VoiceAssistantRoomContent({
     onEndSession()
   }
 
+  // Visual content handling functions
+  const handleVisualContentGenerated = (visualContent: VisualContent, commandType: string) => {
+    setCurrentVisualContent(visualContent)
+    setVisualCommandType(commandType)
+    setShowVisualContent(true)
+    
+    // Track visual content generation
+    trackUserAction('visual_content_generated', {
+      content_type: visualContent.type,
+      command_type: commandType,
+      title: visualContent.title,
+    })
+  }
+
+  const handleVisualContentClose = () => {
+    setShowVisualContent(false)
+    setCurrentVisualContent(null)
+    setVisualCommandType('')
+  }
+
+  const handleVisualContentInteraction = (action: string, data: any) => {
+    // Track visual content interactions
+    trackUserAction('visual_content_interaction', {
+      action,
+      content_type: currentVisualContent?.type,
+      data,
+    })
+  }
+
   return (
     <div className="min-h-screen bg-gray-900 text-white">
       <LiveKitErrorBoundary 
@@ -339,6 +392,20 @@ function VoiceAssistantRoomContent({
           {/* Connection State Toast */}
           <ConnectionStateToast />
           
+          {/* Visual Content Overlay */}
+          {showVisualContent && currentVisualContent && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+                <VoiceVisualContent
+                  visualContent={currentVisualContent}
+                  commandType={visualCommandType}
+                  onClose={handleVisualContentClose}
+                  onInteract={handleVisualContentInteraction}
+                />
+              </div>
+            </div>
+          )}
+          
           {/* Main Room Interface */}
           <div className="flex h-screen">
             {/* Main Content Area */}
@@ -358,6 +425,14 @@ function VoiceAssistantRoomContent({
                          sessionStatus === 'winding-down' ? 'Winding Down' : 'Completed'}
                       </span>
                     </div>
+                    
+                    {/* Visual Content Indicator */}
+                    {currentVisualContent && (
+                      <div className="flex items-center gap-2 bg-blue-600 px-3 py-1 rounded-full">
+                        <Lightbulb className="w-4 h-4" />
+                        <span className="text-sm">Visual Content Available</span>
+                      </div>
+                    )}
                   </div>
                   
                   {/* Timer */}

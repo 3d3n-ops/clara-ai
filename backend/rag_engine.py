@@ -123,60 +123,78 @@ class RAGEngine:
     def _get_file_content(self, file_path: str, file_type: str) -> str:
         """Extract text content from various file types"""
         try:
-            print(f"Extracting content from {file_path} (type: {file_type})")
+            print(f"[RAG Engine] Extracting content from {file_path} (type: {file_type})")
             
             if file_type == 'txt' or file_path.endswith('.txt'):
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
-                    print(f"Extracted {len(content)} characters from text file")
+                    print(f"[RAG Engine] Extracted {len(content)} characters from text file")
                     return content
             
             elif file_type == 'pdf' or file_path.endswith('.pdf'):
-                reader = PdfReader(file_path)
-                text = ""
-                for page in reader.pages:
-                    text += page.extract_text() + "\n"
-                print(f"Extracted {len(text)} characters from PDF file")
-                return text
+                print(f"[RAG Engine] Processing PDF file: {file_path}")
+                try:
+                    reader = PdfReader(file_path)
+                    print(f"[RAG Engine] PDF has {len(reader.pages)} pages")
+                    text = ""
+                    for i, page in enumerate(reader.pages):
+                        page_text = page.extract_text()
+                        text += page_text + "\n"
+                        print(f"[RAG Engine] Page {i+1}: {len(page_text)} characters")
+                    print(f"[RAG Engine] Extracted {len(text)} total characters from PDF file")
+                    return text
+                except Exception as pdf_error:
+                    print(f"[RAG Engine] PDF processing error: {pdf_error}")
+                    import traceback
+                    print(f"[RAG Engine] PDF error traceback: {traceback.format_exc()}")
+                    return f"Error reading PDF: {str(pdf_error)}"
             
             elif file_type in ['docx', 'doc'] or file_path.endswith(('.docx', '.doc')):
-                doc = docx.Document(file_path)
-                text = ""
-                for paragraph in doc.paragraphs:
-                    text += paragraph.text + "\n"
-                print(f"Extracted {len(text)} characters from Word document")
-                return text
+                print(f"[RAG Engine] Processing Word document: {file_path}")
+                try:
+                    doc = docx.Document(file_path)
+                    text = ""
+                    for paragraph in doc.paragraphs:
+                        text += paragraph.text + "\n"
+                    print(f"[RAG Engine] Extracted {len(text)} characters from Word document")
+                    return text
+                except Exception as doc_error:
+                    print(f"[RAG Engine] Word document processing error: {doc_error}")
+                    return f"Error reading Word document: {str(doc_error)}"
             
             elif file_type == 'image' or file_path.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')):
+                print(f"[RAG Engine] Processing image file: {file_path}")
                 # OCR for images
                 try:
                     image = Image.open(file_path)
                     text = pytesseract.image_to_string(image)
-                    print(f"Extracted {len(text)} characters from image using OCR")
+                    print(f"[RAG Engine] Extracted {len(text)} characters from image using OCR")
                     return text
                 except Exception as ocr_error:
-                    print(f"OCR failed for image {file_path}: {ocr_error}")
+                    print(f"[RAG Engine] OCR failed for image {file_path}: {ocr_error}")
                     return f"Image file: {file_path} (OCR processing failed)"
             
             else:
                 # Fallback to plain text
-                print(f"Using fallback text extraction for {file_type}")
+                print(f"[RAG Engine] Using fallback text extraction for {file_type}")
                 try:
                     with open(file_path, 'r', encoding='utf-8') as f:
                         content = f.read()
-                        print(f"Extracted {len(content)} characters using fallback method")
+                        print(f"[RAG Engine] Extracted {len(content)} characters using fallback method")
                         return content
                 except UnicodeDecodeError:
                     # Try with different encoding
+                    print(f"[RAG Engine] UTF-8 failed, trying latin-1 encoding")
                     with open(file_path, 'r', encoding='latin-1') as f:
                         content = f.read()
-                        print(f"Extracted {len(content)} characters using latin-1 encoding")
+                        print(f"[RAG Engine] Extracted {len(content)} characters using latin-1 encoding")
                         return content
                     
         except Exception as e:
-            print(f"Error extracting content from {file_path}: {e}")
+            print(f"[RAG Engine] Error extracting content from {file_path}: {e}")
+            print(f"[RAG Engine] Error type: {type(e).__name__}")
             import traceback
-            traceback.print_exc()
+            print(f"[RAG Engine] Content extraction traceback: {traceback.format_exc()}")
             return f"Error reading file: {str(e)}"
     
     def _chunk_text(self, text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
@@ -213,32 +231,38 @@ class RAGEngine:
         """Process a file and store its chunks with embeddings in Pinecone"""
         try:
             # Initialize the RAG engine first
+            print(f"[RAG Engine] Initializing for file processing...")
             await self.initialize()
+            print(f"[RAG Engine] Initialization complete")
             
-            print(f"Starting file processing: {filename}")
+            print(f"[RAG Engine] Starting file processing: {filename}")
             
             # Determine file type from filename
             file_type = self._get_file_type_from_filename(filename)
+            print(f"[RAG Engine] Detected file type: {file_type}")
             
             # Extract content from file
+            print(f"[RAG Engine] Extracting content from file...")
             content = self._get_file_content(file_path, file_type)
             if not content.strip():
-                print(f"No content extracted from file: {filename}")
+                print(f"[RAG Engine] No content extracted from file: {filename}")
                 return {"success": False, "error": "No content extracted from file"}
             
-            print(f"Extracted {len(content)} characters from file")
+            print(f"[RAG Engine] Extracted {len(content)} characters from file")
             
             # Generate content hash
             content_hash = hashlib.sha256(content.encode()).hexdigest()
-            print(f"Generated content hash: {content_hash[:8]}...")
+            print(f"[RAG Engine] Generated content hash: {content_hash[:8]}...")
             
             # Check if file already exists by searching for content hash in Pinecone
             namespace = self._create_namespace(user_id)
-            index = self.pinecone.Index(self.index_name)
+            print(f"[RAG Engine] Using namespace: {namespace}")
             
-            print(f"Using namespace: {namespace}")
+            index = self.pinecone.Index(self.index_name)
+            print(f"[RAG Engine] Got Pinecone index: {self.index_name}")
             
             # Search for existing file with same content hash
+            print(f"[RAG Engine] Checking for existing file...")
             existing_files = index.query(
                 vector=[0] * 1536,  # Dummy vector for metadata-only search
                 top_k=1,
@@ -248,26 +272,30 @@ class RAGEngine:
             )
             
             if existing_files.matches:
-                print(f"File already exists: {filename}")
+                print(f"[RAG Engine] File already exists: {filename}")
                 return {"success": False, "error": "File already exists"}
             
             # Chunk the content
+            print(f"[RAG Engine] Chunking content...")
             chunks = self._chunk_text(content)
-            print(f"Created {len(chunks)} chunks")
+            print(f"[RAG Engine] Created {len(chunks)} chunks")
             
             # Generate embeddings
+            print(f"[RAG Engine] Generating embeddings...")
             embeddings = self._generate_embeddings(chunks)
             
             if not embeddings:
-                print("Failed to generate embeddings")
+                print(f"[RAG Engine] Failed to generate embeddings")
                 return {"success": False, "error": "Failed to generate embeddings"}
             
-            print(f"Generated {len(embeddings)} embeddings")
+            print(f"[RAG Engine] Generated {len(embeddings)} embeddings")
             
             # Generate file ID
             file_id = str(uuid.uuid4())
+            print(f"[RAG Engine] Generated file ID: {file_id}")
             
             # Store chunks and embeddings in Pinecone with file metadata
+            print(f"[RAG Engine] Preparing vectors for Pinecone...")
             vectors = []
             
             for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
@@ -297,25 +325,26 @@ class RAGEngine:
                     "metadata": metadata
                 })
             
-            print(f"Prepared {len(vectors)} vectors for Pinecone")
+            print(f"[RAG Engine] Prepared {len(vectors)} vectors for Pinecone")
             
             # Batch upsert to Pinecone
+            print(f"[RAG Engine] Upserting to Pinecone...")
             index.upsert(vectors=vectors, namespace=namespace)
             
-            print(f"Successfully uploaded file: {filename}")
+            print(f"[RAG Engine] Successfully uploaded file: {filename}")
             
             return {
                 "success": True,
                 "file_id": file_id,
                 "chunks_processed": len(chunks),
-                "original_filename": filename,
-                "content_hash": content_hash
+                "filename": filename
             }
             
         except Exception as e:
-            print(f"Error processing file {filename}: {e}")
+            print(f"[RAG Engine] Error processing file: {e}")
+            print(f"[RAG Engine] Error type: {type(e).__name__}")
             import traceback
-            traceback.print_exc()
+            print(f"[RAG Engine] Traceback: {traceback.format_exc()}")
             return {"success": False, "error": str(e)}
     
     async def search_relevant_chunks(self, query: str, user_id: str, 
@@ -470,19 +499,28 @@ class RAGEngine:
     async def create_folder(self, user_id: str, name: str, description: str = "") -> Dict[str, Any]:
         """Create a new folder for a user"""
         try:
+            print(f"[RAG Engine] Initializing for folder creation")
             await self.initialize()
+            print(f"[RAG Engine] Initialization complete")
             
             # Generate folder ID
             folder_id = f"folder_{uuid.uuid4()}"
+            print(f"[RAG Engine] Generated folder ID: {folder_id}")
             
             # Create namespace for user
             namespace = self._create_namespace(user_id)
+            print(f"[RAG Engine] Using namespace: {namespace}")
+            
+            # Get Pinecone index
+            print(f"[RAG Engine] Getting Pinecone index: {self.index_name}")
             index = self.pinecone.Index(self.index_name)
+            print(f"[RAG Engine] Successfully got Pinecone index")
             
             # Create a non-zero embedding for folder metadata (Pinecone doesn't allow all zeros)
             # Use a simple pattern: first element is 1, rest are small random values
             import random
             folder_embedding = [1.0] + [random.uniform(0.001, 0.01) for _ in range(1535)]
+            print(f"[RAG Engine] Generated folder embedding")
             
             # Store folder metadata in Pinecone
             folder_metadata = {
@@ -493,7 +531,9 @@ class RAGEngine:
                 'folder_created_at': datetime.now().isoformat(),
                 'type': 'folder'
             }
+            print(f"[RAG Engine] Prepared folder metadata: {folder_metadata}")
             
+            print(f"[RAG Engine] Upserting to Pinecone...")
             index.upsert(
                 vectors=[{
                     'id': f"folder_{folder_id}",
@@ -502,17 +542,23 @@ class RAGEngine:
                 }],
                 namespace=namespace
             )
+            print(f"[RAG Engine] Successfully upserted to Pinecone")
             
-            return {
+            result = {
                 'id': folder_id,
                 'name': name,
                 'description': description,
                 'created_at': datetime.now().isoformat(),
                 'user_id': user_id
             }
+            print(f"[RAG Engine] Returning folder result: {result}")
+            return result
             
         except Exception as e:
-            print(f"Error creating folder: {e}")
+            print(f"[RAG Engine] Error creating folder: {e}")
+            print(f"[RAG Engine] Error type: {type(e).__name__}")
+            import traceback
+            print(f"[RAG Engine] Traceback: {traceback.format_exc()}")
             raise e
 
     async def get_user_folders(self, user_id: str) -> List[Dict[str, Any]]:

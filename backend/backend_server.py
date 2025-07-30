@@ -15,7 +15,7 @@ import time
 
 # Import our agents
 from hwk_agent_rag import HomeworkAgentRAG
-from voice_agent_rag import ClaraAssistantRAG
+from voice_agent_rag import ClaraAssistantRAG, VisualCommand
 from rag_engine import rag_engine
 
 app = FastAPI(title="Clara AI Backend Server", version="1.0.0")
@@ -77,6 +77,13 @@ class VoiceChatRequest(BaseModel):
     message: str
     user_id: str
     session_id: Optional[str] = None
+
+# Add this new model for visual generation requests
+class VisualGenerationRequest(BaseModel):
+    command_type: str
+    topic: str
+    context: str = ""
+    user_id: str
 
 # Initialize agents
 homework_agent = HomeworkAgentRAG()
@@ -155,17 +162,23 @@ async def upload_file_rag(request: FileUploadRequest):
     try:
         # Validate user_id is provided
         if not request.user_id:
+            print("[Backend] Error: user_id is required")
             raise HTTPException(status_code=400, detail="user_id is required")
         
-        print(f"Processing upload request for user: {request.user_id}, file: {request.filename}")
+        print(f"[Backend] Processing upload request for user: {request.user_id}, file: {request.filename}")
+        print(f"[Backend] File size: {len(request.content)} characters")
+        print(f"[Backend] Folder ID: {request.folder_id or 'none'}")
         
         # Create temporary file
+        print(f"[Backend] Creating temporary file...")
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as temp_file:
             temp_file.write(request.content)
             temp_file_path = temp_file.name
+        print(f"[Backend] Temporary file created: {temp_file_path}")
         
         try:
             # Process file with RAG engine
+            print(f"[Backend] Calling RAG engine to process file...")
             result = await rag_engine.process_file(
                 file_path=temp_file_path,
                 filename=request.filename,
@@ -173,12 +186,14 @@ async def upload_file_rag(request: FileUploadRequest):
                 folder_id=request.folder_id
             )
             
+            print(f"[Backend] RAG engine result: {result}")
+            
             if not result.get("success", False):
                 error_msg = result.get("error", "Unknown error")
-                print(f"RAG engine processing failed: {error_msg}")
+                print(f"[Backend] RAG engine processing failed: {error_msg}")
                 raise HTTPException(status_code=500, detail=error_msg)
             
-            print(f"Successfully processed file: {request.filename}")
+            print(f"[Backend] Successfully processed file: {request.filename}")
             
             return {
                 "status": "success",
@@ -191,14 +206,16 @@ async def upload_file_rag(request: FileUploadRequest):
             # Clean up temporary file
             if os.path.exists(temp_file_path):
                 os.unlink(temp_file_path)
+                print(f"[Backend] Cleaned up temporary file: {temp_file_path}")
                 
     except HTTPException:
         # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
-        print(f"Unexpected error in upload_file_rag: {e}")
+        print(f"[Backend] Unexpected error in upload_file_rag: {e}")
+        print(f"[Backend] Error type: {type(e).__name__}")
         import traceback
-        traceback.print_exc()
+        print(f"[Backend] Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/homework/files/{user_id}")
@@ -241,14 +258,36 @@ async def get_user_folders(user_id: str):
 async def create_folder(request: FolderRequest):
     """Create a new folder"""
     try:
+        print(f"[Backend] Creating folder for user {request.user_id}")
+        print(f"[Backend] Folder data: name='{request.name}', description='{request.description}'")
+        
+        # Validate required fields
+        if not request.user_id:
+            print("[Backend] Error: user_id is required")
+            raise HTTPException(status_code=400, detail="user_id is required")
+        
+        if not request.name or not request.name.strip():
+            print("[Backend] Error: folder name is required")
+            raise HTTPException(status_code=400, detail="folder name is required")
+        
         folder = await rag_engine.create_folder(
             name=request.name,
             description=request.description,
             user_id=request.user_id
         )
+        
+        print(f"[Backend] Successfully created folder: {folder}")
         return {"status": "success", "folder": folder}
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"[Backend] Error creating folder: {str(e)}")
+        print(f"[Backend] Error type: {type(e).__name__}")
+        import traceback
+        print(f"[Backend] Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/homework/conversations/{user_id}")
 async def get_user_conversations(user_id: str):
@@ -286,7 +325,7 @@ async def get_user_context(
 
 @app.websocket("/voice/ws/{user_id}")
 async def voice_websocket_endpoint(websocket: WebSocket, user_id: str):
-    """WebSocket endpoint for real-time voice/text chat"""
+    """WebSocket endpoint for real-time voice/text chat with visual generation"""
     await websocket.accept()
     active_voice_connections[user_id] = websocket
     
@@ -303,16 +342,26 @@ async def voice_websocket_endpoint(websocket: WebSocket, user_id: str):
             message_type = message.get("type", "text")
             text_content = message.get("text", "")
             
+            print(f"[Voice WebSocket] Received {message_type} message from user {user_id}: {text_content[:100]}...")
+            
             if message_type == "text":
-                # Process text message
+                # Process text message with visual generation capabilities
                 response = await agent.process_with_context(text_content)
                 
-                # Send response back
-                await websocket.send_text(json.dumps({
+                # Send response back with visual content if generated
+                response_data = {
                     "type": "response",
-                    "text": response,
+                    "text": response.get("text", "I understand your message."),
                     "timestamp": datetime.now().isoformat()
-                }))
+                }
+                
+                # Add visual content if generated
+                if response.get("visual_content"):
+                    response_data["visual_content"] = response["visual_content"]
+                    response_data["command_type"] = response.get("command_type")
+                    print(f"[Voice WebSocket] Generated visual content: {response['command_type']}")
+                
+                await websocket.send_text(json.dumps(response_data))
                 
             elif message_type == "audio":
                 # Handle audio data (base64 encoded)
@@ -321,18 +370,25 @@ async def voice_websocket_endpoint(websocket: WebSocket, user_id: str):
                 # In a full implementation, you'd decode and process audio
                 response = await agent.process_with_context("Audio message received")
                 
-                await websocket.send_text(json.dumps({
+                response_data = {
                     "type": "response",
-                    "text": response,
+                    "text": response.get("text", "I received your audio message."),
                     "timestamp": datetime.now().isoformat()
-                }))
+                }
+                
+                # Add visual content if generated
+                if response.get("visual_content"):
+                    response_data["visual_content"] = response["visual_content"]
+                    response_data["command_type"] = response.get("command_type")
+                
+                await websocket.send_text(json.dumps(response_data))
                 
             elif message_type == "session_start":
                 # Initialize session
                 await agent.initialize_rag_engine()
                 await websocket.send_text(json.dumps({
                     "type": "session_started",
-                    "message": "Session started. Ready to help with your studies!",
+                    "message": "Session started. Ready to help with your studies! You can say commands like 'create diagram', 'make flashcards', or 'show quiz' to generate visual content.",
                     "timestamp": datetime.now().isoformat()
                 }))
                 
@@ -344,45 +400,96 @@ async def voice_websocket_endpoint(websocket: WebSocket, user_id: str):
                     "timestamp": datetime.now().isoformat()
                 }))
                 
+            elif message_type == "visual_command":
+                # Handle direct visual generation commands
+                command = message.get("command", "")
+                topic = message.get("topic", "current topic")
+                
+                print(f"[Voice WebSocket] Direct visual command: {command} for topic: {topic}")
+                
+                # Create visual command object
+                visual_command = VisualCommand(command, topic, text_content)
+                
+                # Generate visual content
+                visual_content = await agent.generate_visual_content(visual_command, text_content)
+                voice_response = agent.generate_voice_response_for_visual(visual_command, visual_content)
+                
+                await websocket.send_text(json.dumps({
+                    "type": "response",
+                    "text": voice_response,
+                    "visual_content": visual_content,
+                    "command_type": command,
+                    "timestamp": datetime.now().isoformat()
+                }))
+                
     except WebSocketDisconnect:
         # Clean up when connection is closed
         if user_id in active_voice_connections:
             del active_voice_connections[user_id]
         if user_id in active_voice_agents:
             del active_voice_agents[user_id]
+        print(f"[Voice WebSocket] User {user_id} disconnected")
     except Exception as e:
-        print(f"WebSocket error for user {user_id}: {e}")
-        # Clean up on error
-        if user_id in active_voice_connections:
-            del active_voice_connections[user_id]
-        if user_id in active_voice_agents:
-            del active_voice_agents[user_id]
+        print(f"[Voice WebSocket] Error for user {user_id}: {e}")
+        import traceback
+        print(f"[Voice WebSocket] Traceback: {traceback.format_exc()}")
 
 @app.post("/voice/chat/{user_id}")
 async def voice_text_chat(user_id: str, request: VoiceChatRequest):
-    """Text chat endpoint for voice agent (for non-WebSocket clients)"""
+    """Text-based voice chat endpoint"""
     try:
-        # Rate limiting check
-        if not check_rate_limit(user_id):
-            raise HTTPException(status_code=429, detail="Rate limit exceeded")
-        
-        # Get or create agent for this user
-        if user_id not in active_voice_agents:
-            agent = ClaraAssistantRAG(user_id=user_id)
-            active_voice_agents[user_id] = agent
-        else:
-            agent = active_voice_agents[user_id]
+        # Create voice agent for this user
+        agent = ClaraAssistantRAG(user_id=user_id)
         
         # Process the message
         response = await agent.process_with_context(request.message)
         
         return {
-            "response": response,
-            "timestamp": datetime.now().isoformat(),
-            "user_id": user_id
+            "success": True,
+            "response": response.get("text", "I understand your message."),
+            "visual_content": response.get("visual_content"),
+            "command_type": response.get("command_type"),
+            "timestamp": datetime.now().isoformat()
         }
+        
     except Exception as e:
+        print(f"Error in voice text chat: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/voice/generate-visual")
+async def generate_visual_content(request: VisualGenerationRequest):
+    """Generate visual content based on voice commands"""
+    try:
+        print(f"[Visual API] Generating {request.command_type} for user {request.user_id}")
+        print(f"[Visual API] Topic: {request.topic}")
+        
+        # Create voice agent for this user
+        agent = ClaraAssistantRAG(user_id=request.user_id)
+        
+        # Create visual command
+        visual_command = VisualCommand(request.command_type, request.topic, request.context)
+        
+        # Generate visual content
+        visual_content = await agent.generate_visual_content(visual_command, request.context)
+        
+        # Generate voice response
+        voice_response = agent.generate_voice_response_for_visual(visual_command, visual_content)
+        
+        print(f"[Visual API] Successfully generated {request.command_type}")
+        
+        return {
+            "success": True,
+            "text": voice_response,
+            "visual_content": visual_content,
+            "command_type": request.command_type,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        print(f"[Visual API] Error generating visual content: {e}")
+        import traceback
+        print(f"[Visual API] Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate visual content: {str(e)}")
 
 @app.get("/voice/status/{user_id}")
 async def get_voice_user_status(user_id: str):
