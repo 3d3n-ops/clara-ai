@@ -26,6 +26,11 @@ LIVEKIT_API_KEY=your_livekit_api_key
 LIVEKIT_API_SECRET=your_livekit_api_secret
 ```
 
+### Frontend Configuration
+```
+FRONTEND_URL=https://try-clara.vercel.app
+```
+
 ### Optional (for Supabase integration)
 ```
 SUPABASE_URL=your_supabase_url

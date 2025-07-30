@@ -22,8 +22,7 @@ app = FastAPI(title="Clara AI Backend Server", version="1.0.0")
 
 # Production CORS settings - only allow your frontend domain
 ALLOWED_ORIGINS = [
-    "https://your-production-domain.com",  # Replace with your actual domain
-    "https://www.your-production-domain.com",
+    os.getenv('FRONTEND_URL', 'https://try-clara.vercel.app'),  # Production frontend
     "http://localhost:3000",  # Development only
     "http://localhost:3001",  # Development only
 ]
