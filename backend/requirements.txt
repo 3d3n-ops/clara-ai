@@ -19,4 +19,5 @@ aiofiles
 
 # Additional utilities
 python-jose[cryptography]
-passlib[bcrypt] 
+passlib[bcrypt]
+supabase 
