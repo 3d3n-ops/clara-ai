@@ -68,9 +68,9 @@ uvicorn backend_server:app --host 0.0.0.0 --port $PORT
 
 ### Common Issues
 
-1. **Import Error: noise_cancellation**
-   - ✅ **FIXED**: Removed noise_cancellation import from voice_agent_rag.py
-   - The import was causing compatibility issues with newer LiveKit versions
+1. **Import Error: noise_cancellation and turn_detector**
+   - ✅ **FIXED**: Removed noise_cancellation and turn_detector imports from voice_agent_rag.py
+   - These imports were causing compatibility issues with newer LiveKit versions
 
 2. **Missing Dependencies**
    - ✅ **FIXED**: Added `supabase` to requirements.txt

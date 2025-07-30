@@ -12,7 +12,7 @@ from livekit.plugins import (
     deepgram,
     silero,
 )
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
+# Removed turn_detector import for compatibility
 from rag_engine import rag_engine
 from supabase import create_client
 

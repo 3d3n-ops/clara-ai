@@ -22,11 +22,11 @@ def test_imports():
         from fastapi import FastAPI
         print("✅ FastAPI imported successfully")
         
-        # Test livekit imports (without noise_cancellation)
+        # Test livekit imports (without problematic modules)
         from livekit import agents
         from livekit.agents import AgentSession, Agent, RoomInputOptions
         from livekit.plugins import openai, cartesia, deepgram, silero
-        print("✅ LiveKit imports successful (without noise_cancellation)")
+        print("✅ LiveKit imports successful (without noise_cancellation and turn_detector)")
         
         # Test our custom modules
         from rag_engine import rag_engine
