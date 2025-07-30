@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Upload, X, File, Loader2, CheckCircle } from "lucide-react"
 import { toast } from "sonner"
+import { useUserTracking } from '@/hooks/use-analytics'
 
 interface FileUploadProps {
   onFileUploaded?: (fileId: string, filename: string) => void
@@ -25,6 +26,7 @@ export default function FileUpload({ onFileUploaded, className }: FileUploadProp
   const [folders, setFolders] = useState<Array<{ id: string, name: string }>>([])
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
   const [isLoadingFolders, setIsLoadingFolders] = useState(false)
+  const { trackUserAction } = useUserTracking()
 
   // Ensure selectedFolder is never empty
   useEffect(() => {
@@ -102,6 +104,15 @@ export default function FileUpload({ onFileUploaded, className }: FileUploadProp
           f.id === fileId ? { ...f, status: 'success' } : f
         ))
 
+        // Track successful file upload
+        trackUserAction('file_uploaded', {
+          file_name: file.name,
+          file_size: file.size,
+          file_type: file.type,
+          folder_id: selectedFolder,
+          upload_success: true,
+        })
+
         toast.success(`Uploaded ${file.name} successfully`)
         
         // Call callback if provided
@@ -120,6 +131,15 @@ export default function FileUpload({ onFileUploaded, className }: FileUploadProp
             error: error instanceof Error ? error.message : 'Upload failed' 
           } : f
         ))
+        
+        // Track upload error
+        trackUserAction('file_upload_failed', {
+          file_name: file.name,
+          file_size: file.size,
+          file_type: file.type,
+          folder_id: selectedFolder,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        })
         
         toast.error(`Failed to upload ${file.name}: ${error instanceof Error ? error.message : 'Unknown error'}`)
       }

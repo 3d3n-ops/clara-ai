@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { Input } from "@/components/ui/input"
 import { LoadingSpinner, LoadingCard } from "../components/loading-spinner"
+import { usePageView, useUserTracking } from "@/hooks/use-analytics"
 
 // Lazy load the file upload component
 const FileUpload = React.lazy(() => import('../../components/homework/file-upload'))
@@ -41,6 +42,7 @@ interface LearningStats {
 export default function DashboardPage() {
   const { user } = useUser()
   const router = useRouter()
+  const { trackUserAction } = useUserTracking()
   const [activeTab, setActiveTab] = useState("home")
   const [folders, setFolders] = useState<ClassFolder[]>([])
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -50,6 +52,9 @@ export default function DashboardPage() {
   const [newFolderName, setNewFolderName] = useState("")
   const [newFolderDescription, setNewFolderDescription] = useState("")
   const [isUploading, setIsUploading] = useState(false)
+  
+  // Track page view
+  usePageView('Dashboard')
 
   const [learningStats, setLearningStats] = useState<LearningStats>({
     currentStreak: 0,
@@ -152,16 +157,31 @@ export default function DashboardPage() {
         setNewFolderName("")
         setNewFolderDescription("")
         toast.success('Folder created successfully!')
+        
+        // Track folder creation
+        trackUserAction('folder_created', {
+          folder_name: newFolderName.trim(),
+          folder_description: newFolderDescription.trim(),
+          folder_id: data.folder.id,
+        })
       } else {
         toast.error(data.error || 'Failed to create folder')
+        trackUserAction('folder_creation_failed', {
+          folder_name: newFolderName.trim(),
+          error: data.error,
+        })
       }
     } catch (error) {
       console.error('Error creating folder:', error)
       toast.error('Failed to create folder')
+      trackUserAction('folder_creation_error', {
+        folder_name: newFolderName.trim(),
+        error: error instanceof Error ? error.message : 'Unknown error',
+      })
     } finally {
       setIsCreatingFolder(false)
     }
-  }, [newFolderName, newFolderDescription])
+  }, [newFolderName, newFolderDescription, trackUserAction])
 
   const handleFileUpload = useCallback(async (folderId: string, files: FileList | null) => {
     if (!files || files.length === 0) return
@@ -199,12 +219,20 @@ export default function DashboardPage() {
   }, [fetchFolders])
 
   const completeStudySession = useCallback(() => {
+    trackUserAction('study_session_navigation', {
+      destination: '/chat/study',
+      source: 'dashboard',
+    })
     router.push('/chat/study')
-  }, [router])
+  }, [router, trackUserAction])
 
   const startHomeworkHelp = useCallback(() => {
+    trackUserAction('homework_help_navigation', {
+      destination: '/chat/homework',
+      source: 'dashboard',
+    })
     router.push('/chat/homework')
-  }, [router])
+  }, [router, trackUserAction])
 
   const getPerformanceColor = useCallback((score: number) => {
     if (score >= 80) return "text-green-600"

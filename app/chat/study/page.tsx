@@ -13,6 +13,7 @@ import {
   ConnectionStateToast,
 } from "@livekit/components-react"
 import FileUpload from "@/components/homework/file-upload"
+import { usePageView, useUserTracking } from "@/hooks/use-analytics"
 
 // Client-side only wrapper to prevent hydration issues
 function ClientOnlyStudySessionPage() {
@@ -45,6 +46,10 @@ function StudySessionPageContent() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   const { connect, disconnect, isConnected, connectionState } = useLiveKit()
+  const { trackUserAction } = useUserTracking()
+  
+  // Track page view
+  usePageView('Study Session')
 
   useEffect(() => {
     const sessionId = Math.random().toString(36).substring(7)
@@ -61,9 +66,23 @@ function StudySessionPageContent() {
     try {
       const generatedToken = await generateLiveKitToken(roomName, participantName)
       setToken(generatedToken)
+      
+      // Track voice session start
+      trackUserAction('voice_session_started', {
+        room_name: roomName,
+        participant_name: participantName,
+        session_type: 'study',
+      })
     } catch (err) {
       setError("Failed to start session. Please try again.")
       setIsConnecting(false)
+      
+      // Track session start error
+      trackUserAction('voice_session_start_failed', {
+        room_name: roomName,
+        participant_name: participantName,
+        error: err instanceof Error ? err.message : 'Unknown error',
+      })
     }
   }
 
@@ -71,6 +90,14 @@ function StudySessionPageContent() {
     setToken("")
     setIsConnecting(false)
     disconnect()
+    
+    // Track session end
+    trackUserAction('voice_session_ended', {
+      room_name: roomName,
+      participant_name: participantName,
+      session_type: 'study',
+      session_duration: 'manual_end',
+    })
   }
 
   const handleFileUploaded = (fileId: string, filename: string) => {

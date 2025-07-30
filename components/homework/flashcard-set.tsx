@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { ChevronLeft, ChevronRight, RotateCcw, Shuffle, Download } from "lucide-react"
 import { useLearningPerformance } from '@/hooks/use-learning-performance'
+import { useUserTracking } from '@/hooks/use-analytics'
 
 interface FlashCard {
   front: string
@@ -28,12 +29,21 @@ export default function FlashcardSet({ title, cards, validated = true }: Flashca
   const [correctCount, setCorrectCount] = useState(0)
   const [incorrectCount, setIncorrectCount] = useState(0)
   const { updateFlashcardPerformance } = useLearningPerformance()
+  const { trackUserAction } = useUserTracking()
 
   const currentCard = cards[cardOrder[currentCardIndex]]
   const totalCards = cards.length
 
   const flipCard = () => {
     setIsFlipped(!isFlipped)
+    
+    // Track flashcard flip
+    trackUserAction('flashcard_flipped', {
+      flashcard_title: title,
+      card_index: currentCardIndex,
+      is_flipped: !isFlipped,
+      total_cards: cards.length,
+    })
   }
 
   const nextCard = () => {
@@ -71,16 +81,38 @@ export default function FlashcardSet({ title, cards, validated = true }: Flashca
     setIncorrectCount(0)
     setCurrentCardIndex(0)
     setIsFlipped(false)
+    
+    // Track study mode start
+    trackUserAction('flashcard_set_started', {
+      flashcard_title: title,
+      total_cards: cards.length,
+    })
   }
 
   const markCorrect = () => {
     setCorrectCount(correctCount + 1)
     nextCard()
+    
+    // Track correct answer
+    trackUserAction('flashcard_marked_correct', {
+      flashcard_title: title,
+      card_index: currentCardIndex,
+      correct_count: correctCount + 1,
+      total_cards: cards.length,
+    })
   }
 
   const markIncorrect = () => {
     setIncorrectCount(incorrectCount + 1)
     nextCard()
+    
+    // Track incorrect answer
+    trackUserAction('flashcard_marked_incorrect', {
+      flashcard_title: title,
+      card_index: currentCardIndex,
+      incorrect_count: incorrectCount + 1,
+      total_cards: cards.length,
+    })
   }
 
   const downloadFlashcards = () => {

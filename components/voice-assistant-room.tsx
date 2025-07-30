@@ -22,6 +22,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Progress } from "@/components/ui/progress"
 import { Home, Folder, Settings, Menu, X, MessageSquare, Monitor, Users, Mic, Volume2, Clock, Trophy, BookOpen } from "lucide-react"
 import Link from "next/link"
+import { useUserTracking } from '@/hooks/use-analytics'
 
 interface VoiceAssistantRoomProps {
   onEndSession: () => void
@@ -104,6 +105,7 @@ function VoiceAssistantRoomContent({
   const [sessionSummary, setSessionSummary] = useState<SessionSummary | null>(null)
   const [isSessionEnding, setIsSessionEnding] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { trackUserAction } = useUserTracking()
   
   // Wrap LiveKit hooks in try-catch to handle context errors
   let room, localParticipant, participants, tracks
@@ -173,8 +175,15 @@ function VoiceAssistantRoomContent({
     if (aiParticipants.length > 0 && !sessionStartTime) {
       setSessionStartTime(new Date())
       console.log('Study session started!')
+      
+      // Track study session start
+      trackUserAction('study_session_started', {
+        session_type: 'voice',
+        ai_participants: aiParticipants.length,
+        human_participants: humanParticipants.length,
+      })
     }
-  }, [aiParticipants.length, sessionStartTime])
+  }, [aiParticipants.length, sessionStartTime, trackUserAction])
 
   // Timer countdown
   useEffect(() => {
@@ -234,6 +243,15 @@ function VoiceAssistantRoomContent({
     // Update learning stats
     updateLearningStats()
     
+    // Track study session completion
+    trackUserAction('study_session_completed', {
+      session_duration: 600 - timeRemaining,
+      confidence_score: mockSummary.confidenceScore,
+      classes_covered: mockSummary.classesCovered,
+      topics_covered: mockSummary.topicsCovered,
+      key_concepts: mockSummary.keyConcepts,
+    })
+    
     // Send session completion to API
     try {
       const sessionData = {
@@ -255,8 +273,13 @@ function VoiceAssistantRoomContent({
       })
     } catch (error) {
       console.error('Failed to save session data:', error)
+      
+      // Track API error
+      trackUserAction('study_session_completion_error', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      })
     }
-  }, [timeRemaining])
+  }, [timeRemaining, trackUserAction])
 
   const updateLearningStats = () => {
     const currentStats = JSON.parse(localStorage.getItem('learningStats') || '{}')
@@ -271,6 +294,13 @@ function VoiceAssistantRoomContent({
   const handleEndSession = () => {
     if (sessionStatus === 'active') {
       setSessionStatus('completed')
+      
+      // Track early session end
+      trackUserAction('study_session_ended_early', {
+        session_duration: 600 - timeRemaining,
+        session_status: sessionStatus,
+      })
+      
       handleSessionCompletion()
     } else {
       onEndSession()

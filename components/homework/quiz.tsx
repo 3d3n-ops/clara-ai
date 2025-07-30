@@ -9,6 +9,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
 import { CheckCircle, XCircle, RotateCcw, Download } from "lucide-react"
 import { useLearningPerformance } from '@/hooks/use-learning-performance'
+import { useUserTracking } from '@/hooks/use-analytics'
 
 interface QuizQuestion {
   question: string
@@ -39,6 +40,7 @@ export default function Quiz({ title, questions, validated = true }: QuizProps) 
   const [isQuizComplete, setIsQuizComplete] = useState(false)
   const [quizStarted, setQuizStarted] = useState(false)
   const { updateQuizPerformance } = useLearningPerformance()
+  const { trackUserAction } = useUserTracking()
 
   const currentQuestion = questions[currentQuestionIndex]
   const totalQuestions = questions.length
@@ -51,6 +53,12 @@ export default function Quiz({ title, questions, validated = true }: QuizProps) 
     setShowAnswer(false)
     setQuizResults([])
     setIsQuizComplete(false)
+    
+    // Track quiz start
+    trackUserAction('quiz_started', {
+      quiz_title: title,
+      total_questions: questions.length,
+    })
   }
 
   const submitAnswer = () => {
@@ -66,6 +74,15 @@ export default function Quiz({ title, questions, validated = true }: QuizProps) 
 
     setQuizResults([...quizResults, result])
     setShowAnswer(true)
+    
+    // Track question answered
+    trackUserAction('quiz_question_answered', {
+      quiz_title: title,
+      question_index: currentQuestionIndex,
+      question_type: currentQuestion.type,
+      is_correct: isCorrect,
+      total_questions: questions.length,
+    })
   }
 
   const nextQuestion = () => {
@@ -79,6 +96,14 @@ export default function Quiz({ title, questions, validated = true }: QuizProps) 
       const correctAnswers = quizResults.filter(r => r.isCorrect).length + 1 // +1 for current question
       const score = Math.round((correctAnswers / totalQuestions) * 100)
       updateQuizPerformance(score)
+      
+      // Track quiz completion
+      trackUserAction('quiz_completed', {
+        quiz_title: title,
+        total_questions: totalQuestions,
+        correct_answers: correctAnswers,
+        score: score,
+      })
     }
   }
 

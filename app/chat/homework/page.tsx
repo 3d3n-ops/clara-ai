@@ -13,6 +13,7 @@ import FlashcardSet from "@/components/homework/flashcard-set"
 import Quiz from "@/components/homework/quiz"
 import FileUpload from "@/components/homework/file-upload"
 import ReactMarkdown from 'react-markdown'
+import { usePageView, useUserTracking } from "@/hooks/use-analytics"
 
 interface Message {
   id: string
@@ -40,6 +41,11 @@ export default function HomeworkHelpPage() {
   ])
   const [inputMessage, setInputMessage] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  
+  const { trackUserAction } = useUserTracking()
+  
+  // Track page view
+  usePageView('Homework Help')
 
   const sendMessage = async () => {
     if (inputMessage.trim() && !isLoading) {
@@ -53,6 +59,12 @@ export default function HomeworkHelpPage() {
       setMessages(prev => [...prev, newMessage])
       setInputMessage("")
       setIsLoading(true)
+
+      // Track message sent
+      trackUserAction('homework_message_sent', {
+        message_length: inputMessage.length,
+        conversation_length: messages.length + 1,
+      })
 
       try {
         // Build conversation history for API
@@ -83,6 +95,22 @@ export default function HomeworkHelpPage() {
         }
         
         setMessages(prev => [...prev, claraResponse])
+        
+        // Track message received and tool generation
+        trackUserAction('homework_message_received', {
+          response_length: claraResponse.content.length,
+          tool_calls_count: claraResponse.tool_calls?.length || 0,
+        })
+        
+        // Track tool generation if any
+        if (claraResponse.tool_calls && claraResponse.tool_calls.length > 0) {
+          claraResponse.tool_calls.forEach(toolCall => {
+            trackUserAction('tool_generated', {
+              tool_type: toolCall.type,
+              tool_title: toolCall.data?.title || 'Untitled',
+            })
+          })
+        }
       } catch (error) {
         console.error('Error sending message:', error)
         const errorResponse: Message = {
@@ -92,6 +120,11 @@ export default function HomeworkHelpPage() {
           timestamp: new Date(),
         }
         setMessages(prev => [...prev, errorResponse])
+        
+        // Track error
+        trackUserAction('homework_chat_error', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+        })
       } finally {
         setIsLoading(false)
       }

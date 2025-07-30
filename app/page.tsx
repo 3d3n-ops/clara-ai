@@ -8,11 +8,15 @@ import { AuthButtons } from "./components/auth-buttons"
 import Link from "next/link"
 import { useUser } from "@clerk/nextjs"
 import { LoadingSpinner } from "./components/loading-spinner"
+import { usePageView } from "@/hooks/use-analytics"
 
 export default function LandingPage() {
   const { isSignedIn } = useUser()
   const [isLoading, setIsLoading] = useState(true)
   const [isClient, setIsClient] = useState(false)
+  
+  // Track page view
+  usePageView('Landing Page')
 
   useEffect(() => {
     setIsClient(true)
