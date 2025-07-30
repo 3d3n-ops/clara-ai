@@ -1,10 +1,36 @@
+"use client"
+
+import React, { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Play } from "lucide-react"
 import { SignInButton } from "@clerk/nextjs"
 import { AuthButtons } from "./components/auth-buttons"
 import Link from "next/link"
+import { useUser } from "@clerk/nextjs"
+import { LoadingSpinner } from "./components/loading-spinner"
 
 export default function LandingPage() {
+  const { isSignedIn } = useUser()
+  const [isLoading, setIsLoading] = useState(true)
+  const [isClient, setIsClient] = useState(false)
+
+  useEffect(() => {
+    setIsClient(true)
+    const timer = setTimeout(() => {
+      setIsLoading(false)
+    }, 300)
+
+    return () => clearTimeout(timer)
+  }, [])
+
+  if (!isClient || isLoading) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <LoadingSpinner size={48} text="Loading Clara.ai..." />
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-white">
       {/* Navigation */}
@@ -39,11 +65,19 @@ export default function LandingPage() {
           </p>
 
           {/* CTA Button */}
-          <SignInButton mode="modal">
-            <Button size="lg" className="bg-gray-900 hover:bg-gray-800 text-white px-8 py-3 text-lg font-medium mb-16">
-              Begin learning!
-            </Button>
-          </SignInButton>
+          {isSignedIn ? (
+            <Link href="/dashboard">
+              <Button size="lg" className="bg-gray-900 hover:bg-gray-800 text-white px-8 py-3 text-lg font-medium mb-16">
+                Go to Dashboard
+              </Button>
+            </Link>
+          ) : (
+            <SignInButton mode="modal">
+              <Button size="lg" className="bg-gray-900 hover:bg-gray-800 text-white px-8 py-3 text-lg font-medium mb-16">
+                Begin learning!
+              </Button>
+            </SignInButton>
+          )}
 
           {/* Demo Video Section */}
           <div className="max-w-4xl mx-auto">

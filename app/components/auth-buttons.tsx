@@ -11,9 +11,17 @@ export function AuthButtons() {
 
   useEffect(() => {
     if (isSignedIn) {
-      // Check if user has completed onboarding (you'd typically check this from your database)
-      // For now, we'll always redirect to onboarding
-      router.push("/onboarding")
+      // Check if user has completed onboarding by checking localStorage
+      const onboardingData = localStorage.getItem("onboardingData")
+      const userFolders = localStorage.getItem("userFolders")
+      
+      // If user has completed onboarding (has onboarding data or folders), go to dashboard
+      if (onboardingData || userFolders) {
+        router.push("/dashboard")
+      } else {
+        // Only redirect to onboarding if they haven't completed it
+        router.push("/onboarding")
+      }
     }
   }, [isSignedIn, router])
 

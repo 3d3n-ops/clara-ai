@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import React, { useState, useEffect, useMemo, useCallback, Suspense } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -11,6 +11,10 @@ import { useUser } from "@clerk/nextjs"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { Input } from "@/components/ui/input"
+import { LoadingSpinner, LoadingCard } from "../components/loading-spinner"
+
+// Lazy load the file upload component
+const FileUpload = React.lazy(() => import('../../components/homework/file-upload'))
 
 interface ClassFolder {
   id: string
@@ -45,6 +49,7 @@ export default function DashboardPage() {
   const [isCreatingFolder, setIsCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState("")
   const [newFolderDescription, setNewFolderDescription] = useState("")
+  const [isUploading, setIsUploading] = useState(false)
 
   const [learningStats, setLearningStats] = useState<LearningStats>({
     currentStreak: 0,
@@ -59,6 +64,14 @@ export default function DashboardPage() {
     }
   })
 
+  // Memoized values for better performance
+  const totalFiles = useMemo(() => 
+    folders.reduce((sum, folder) => sum + (folder.file_count || 0), 0), 
+    [folders]
+  )
+
+  const totalFolders = useMemo(() => folders.length, [folders])
+
   useEffect(() => {
     fetchFolders()
   }, [])
@@ -67,56 +80,43 @@ export default function DashboardPage() {
     // Load learning stats from localStorage
     const savedStats = localStorage.getItem("learningStats")
     if (savedStats) {
-      const parsedStats = JSON.parse(savedStats)
-      // Handle migration from old format to new format
-      if (parsedStats.longestStreak !== undefined) {
-        // Migrate old format to new format
-        const newStats: LearningStats = {
-          currentStreak: parsedStats.currentStreak || 0,
-          totalSessions: parsedStats.totalSessions || 0,
-          lastStudyDate: parsedStats.lastStudyDate || null,
-          learningPerformance: {
-            quizScore: 75, // Default values for demo
-            flashcardScore: 80,
-            overallScore: 77,
-            totalQuizzes: 5,
-            totalFlashcards: 8
+      try {
+        const parsedStats = JSON.parse(savedStats)
+        // Handle migration from old format to new format
+        if (parsedStats.longestStreak !== undefined) {
+          // Migrate old format to new format
+          const newStats: LearningStats = {
+            currentStreak: parsedStats.currentStreak || 0,
+            totalSessions: parsedStats.totalSessions || 0,
+            lastStudyDate: parsedStats.lastStudyDate || null,
+            learningPerformance: {
+              quizScore: 75, // Default values for demo
+              flashcardScore: 80,
+              overallScore: 77,
+              totalQuizzes: 5,
+              totalFlashcards: 8
+            }
           }
+          setLearningStats(newStats)
+          localStorage.setItem("learningStats", JSON.stringify(newStats))
+        } else {
+          setLearningStats(parsedStats)
         }
-        setLearningStats(newStats)
-        localStorage.setItem("learningStats", JSON.stringify(newStats))
-      } else {
-        setLearningStats(parsedStats)
+      } catch (error) {
+        console.error('Error parsing learning stats:', error)
       }
     }
   }, [])
 
-  const fetchFolders = async () => {
+  const fetchFolders = useCallback(async () => {
     setIsLoadingFolders(true)
     try {
       const response = await fetch('/api/homework/folders')
       const data = await response.json()
       
       if (data.success) {
-        const foldersWithFileCount = await Promise.all(
-          (data.folders || []).map(async (folder: ClassFolder) => {
-            try {
-              const filesResponse = await fetch(`/api/homework/files?folderId=${folder.id}`)
-              const filesData = await filesResponse.json()
-              return {
-                ...folder,
-                file_count: filesData.success ? filesData.files.length : 0
-              }
-            } catch (error) {
-              console.error(`Error fetching files for folder ${folder.id}:`, error)
-              return {
-                ...folder,
-                file_count: 0
-              }
-            }
-          })
-        )
-        setFolders(foldersWithFileCount)
+        // Simplified folder fetching - don't fetch file counts immediately
+        setFolders(data.folders || [])
       } else {
         console.error('Failed to fetch folders:', data.error)
         toast.error('Failed to load folders')
@@ -127,9 +127,9 @@ export default function DashboardPage() {
     } finally {
       setIsLoadingFolders(false)
     }
-  }
+  }, [])
 
-  const createFolder = async () => {
+  const createFolder = useCallback(async () => {
     if (!newFolderName.trim()) return
 
     setIsCreatingFolder(true)
@@ -148,10 +148,10 @@ export default function DashboardPage() {
       const data = await response.json()
       
       if (data.success) {
-        setFolders(prev => [data.folder, ...prev])
+        setFolders(prev => [...prev, data.folder])
         setNewFolderName("")
         setNewFolderDescription("")
-        toast.success(`Created folder "${data.folder.name}"`)
+        toast.success('Folder created successfully!')
       } else {
         toast.error(data.error || 'Failed to create folder')
       }
@@ -161,15 +161,15 @@ export default function DashboardPage() {
     } finally {
       setIsCreatingFolder(false)
     }
-  }
+  }, [newFolderName, newFolderDescription])
 
-  const handleFileUpload = async (folderId: string, files: FileList | null) => {
-    if (!files) return
+  const handleFileUpload = useCallback(async (folderId: string, files: FileList | null) => {
+    if (!files || files.length === 0) return
 
-    const fileArray = Array.from(files)
-    
-    for (const file of fileArray) {
-      try {
+    setIsUploading(true)
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
         const formData = new FormData()
         formData.append('file', file)
         formData.append('folderId', folderId)
@@ -182,77 +182,41 @@ export default function DashboardPage() {
         const data = await response.json()
         
         if (data.success) {
-          toast.success(`Uploaded ${file.name}`)
-          // Refresh folders to update file count
-          fetchFolders()
+          toast.success(`Uploaded ${file.name} successfully!`)
         } else {
           toast.error(`Failed to upload ${file.name}: ${data.error}`)
         }
-      } catch (error) {
-        console.error('Error uploading file:', error)
-        toast.error(`Failed to upload ${file.name}`)
       }
+      
+      // Refresh folders to update file counts
+      await fetchFolders()
+    } catch (error) {
+      console.error('Error uploading files:', error)
+      toast.error('Failed to upload files')
+    } finally {
+      setIsUploading(false)
     }
-  }
+  }, [fetchFolders])
 
-  const completeStudySession = () => {
-    const today = new Date().toDateString()
-    const yesterday = new Date(Date.now() - 86400000).toDateString()
+  const completeStudySession = useCallback(() => {
+    router.push('/chat/study')
+  }, [router])
 
-    setLearningStats((prevStats) => {
-      let newStreak = prevStats.currentStreak
+  const startHomeworkHelp = useCallback(() => {
+    router.push('/chat/homework')
+  }, [router])
 
-      // Check if this is a new day
-      if (prevStats.lastStudyDate !== today) {
-        // If last study was yesterday, increment streak
-        if (prevStats.lastStudyDate === yesterday) {
-          newStreak = prevStats.currentStreak + 1
-        }
-        // If last study was more than a day ago, reset streak
-        else if (prevStats.lastStudyDate && prevStats.lastStudyDate !== yesterday) {
-          newStreak = 1
-        }
-        // If this is the first study session ever
-        else if (!prevStats.lastStudyDate) {
-          newStreak = 1
-        }
-      }
+  const getPerformanceColor = useCallback((score: number) => {
+    if (score >= 80) return "text-green-600"
+    if (score >= 60) return "text-yellow-600"
+    return "text-red-600"
+  }, [])
 
-      const newStats = {
-        ...prevStats,
-        currentStreak: newStreak,
-        totalSessions: prevStats.totalSessions + 1,
-        lastStudyDate: today,
-      }
-
-      // Save to localStorage
-      localStorage.setItem("learningStats", JSON.stringify(newStats))
-
-      return newStats
-    })
-
-    // Navigate to study session
-    router.push("/chat/study")
-  }
-
-  const startHomeworkHelp = () => {
-    router.push("/chat/homework")
-  }
-
-  const getPerformanceColor = (score: number) => {
-    if (score >= 90) return 'text-green-600'
-    if (score >= 80) return 'text-blue-600'
-    if (score >= 70) return 'text-yellow-600'
-    return 'text-white-600' // Changed from red to neutral gray
-  }
-
-  const getPerformanceBadge = (score: number) => {
-    if (score >= 90) return { text: 'Excellent', color: 'bg-green-100 text-green-800' }
-    if (score >= 80) return { text: 'Good', color: 'bg-blue-100 text-blue-800' }
-    if (score >= 70) return { text: 'Fair', color: 'bg-yellow-100 text-yellow-800' }
-    if (score > 0) return { text: 'Getting Started', color: 'bg-gray-100 text-gray-800' }
-    return { text: 'Ready to Learn', color: 'bg-blue-100 text-blue-800' } // Encouraging message for 0%
-  }
+  const getPerformanceBadge = useCallback((score: number) => {
+    if (score >= 80) return "bg-green-100 text-green-800"
+    if (score >= 60) return "bg-yellow-100 text-yellow-800"
+    return "bg-red-100 text-red-800"
+  }, [])
 
   const renderHomeTab = () => (
     <div className="p-8">
@@ -332,8 +296,8 @@ export default function DashboardPage() {
                   ? "No quizzes taken yet" 
                   : `${learningStats.learningPerformance.totalQuizzes} quizzes taken`}
               </span>
-              <Badge variant="secondary" className={getPerformanceBadge(learningStats.learningPerformance.quizScore).color}>
-                {getPerformanceBadge(learningStats.learningPerformance.quizScore).text}
+              <Badge variant="secondary" className={getPerformanceBadge(learningStats.learningPerformance.quizScore)}>
+                {getPerformanceBadge(learningStats.learningPerformance.quizScore)}
               </Badge>
             </div>
           </CardContent>
@@ -363,8 +327,8 @@ export default function DashboardPage() {
                   ? "No flashcard sets yet" 
                   : `${learningStats.learningPerformance.totalFlashcards} flashcard sets`}
               </span>
-              <Badge variant="secondary" className={getPerformanceBadge(learningStats.learningPerformance.flashcardScore).color}>
-                {getPerformanceBadge(learningStats.learningPerformance.flashcardScore).text}
+              <Badge variant="secondary" className={getPerformanceBadge(learningStats.learningPerformance.flashcardScore)}>
+                {getPerformanceBadge(learningStats.learningPerformance.flashcardScore)}
               </Badge>
             </div>
           </CardContent>
@@ -465,8 +429,8 @@ export default function DashboardPage() {
                         </p>
                       </div>
                     </div>
-                    <Badge variant="secondary" className={getPerformanceBadge(learningStats.learningPerformance.quizScore).color}>
-                      {getPerformanceBadge(learningStats.learningPerformance.quizScore).text}
+                    <Badge variant="secondary" className={getPerformanceBadge(learningStats.learningPerformance.quizScore)}>
+                      {getPerformanceBadge(learningStats.learningPerformance.quizScore)}
                     </Badge>
                   </div>
                 )}
@@ -520,9 +484,7 @@ export default function DashboardPage() {
       </div>
 
       {isLoadingFolders ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-        </div>
+        <LoadingCard text="Loading your classes..." />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {folders.map((folder) => (
@@ -551,12 +513,13 @@ export default function DashboardPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Upload Files
                   </label>
-                  <input
-                    type="file"
-                    multiple
-                    onChange={(e) => handleFileUpload(folder.id, e.target.files)}
-                    className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                  />
+                  <Suspense fallback={<LoadingSpinner size={24} text="Loading upload..." />}>
+                    <FileUpload onFileUploaded={(fileId, filename) => {
+                      toast.success(`Uploaded ${filename} successfully!`)
+                      // Refresh folders to update file count
+                      fetchFolders()
+                    }} />
+                  </Suspense>
                 </div>
               </CardContent>
             </Card>
@@ -701,7 +664,7 @@ export default function DashboardPage() {
                 <div>
                   <h4 className="font-medium text-gray-900">Uploaded Files</h4>
                   <p className="text-sm text-gray-500">
-                    {folders.reduce((total, folder) => total + (folder.file_count || 0), 0)} files uploaded
+                    {totalFiles} files uploaded
                   </p>
                 </div>
                 <Button

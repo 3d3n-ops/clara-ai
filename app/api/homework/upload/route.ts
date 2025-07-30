@@ -104,14 +104,17 @@ export async function POST(request: NextRequest) {
     const arrayBuffer = await file.arrayBuffer()
     const content = new TextDecoder().decode(arrayBuffer)
     
-    // Prepare request body for Python backend
+    // Prepare request body for Python backend with user_id
     const requestBody = {
       filename: file.name,
       content: content,
-      folder_id: folderId || null
+      folder_id: folderId || null,
+      user_id: userId  // Add user_id to the request
     }
     
     const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8000'
+    
+    console.log(`Uploading file ${file.name} for user ${userId} to folder ${folderId || 'none'}`)
     
     const response = await fetch(`${pythonBackendUrl}/homework/upload-rag`, {
       method: 'POST',
@@ -124,7 +127,13 @@ export async function POST(request: NextRequest) {
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}))
       console.error(`Backend upload error: ${response.status} - ${errorData.error || 'Unknown error'}`)
-      throw new Error(`Backend error: ${response.status} - ${errorData.error || 'Unknown error'}`)
+      return NextResponse.json(
+        { 
+          success: false,
+          error: `Backend error: ${response.status} - ${errorData.error || 'Unknown error'}`
+        },
+        { status: response.status }
+      )
     }
 
     const data = await response.json()

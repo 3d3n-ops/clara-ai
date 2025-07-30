@@ -74,17 +74,28 @@ export default function FileUpload({ onFileUploaded, className }: FileUploadProp
           formData.append('folderId', selectedFolder)
         }
 
+        console.log(`Uploading file: ${file.name} to folder: ${selectedFolder}`)
+
         const response = await fetch('/api/homework/upload', {
           method: 'POST',
           body: formData,
         })
 
+        console.log(`Upload response status: ${response.status}`)
+
         if (!response.ok) {
-          const errorData = await response.json()
-          throw new Error(errorData.error || 'Upload failed')
+          let errorMessage = 'Upload failed'
+          try {
+            const errorData = await response.json()
+            errorMessage = errorData.error || errorData.message || `HTTP ${response.status}: Upload failed`
+          } catch (parseError) {
+            errorMessage = `HTTP ${response.status}: Upload failed`
+          }
+          throw new Error(errorMessage)
         }
 
         const data = await response.json()
+        console.log('Upload response data:', data)
         
         // Update file status to success
         setUploadedFiles(prev => prev.map(f => 
@@ -110,7 +121,7 @@ export default function FileUpload({ onFileUploaded, className }: FileUploadProp
           } : f
         ))
         
-        toast.error(`Failed to upload ${file.name}`)
+        toast.error(`Failed to upload ${file.name}: ${error instanceof Error ? error.message : 'Unknown error'}`)
       }
     }
   }

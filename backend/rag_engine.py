@@ -104,18 +104,34 @@ class RAGEngine:
         except Exception as e:
             print(f"Error ensuring Pinecone index: {e}")
     
+    def _get_file_type_from_filename(self, filename: str) -> str:
+        """Determine file type from filename extension"""
+        filename_lower = filename.lower()
+        if filename_lower.endswith('.pdf'):
+            return 'pdf'
+        elif filename_lower.endswith('.docx'):
+            return 'docx'
+        elif filename_lower.endswith('.doc'):
+            return 'doc'
+        elif filename_lower.endswith('.txt'):
+            return 'txt'
+        elif filename_lower.endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
+            return 'image'
+        else:
+            return 'txt'  # Default to text for unknown types
+
     def _get_file_content(self, file_path: str, file_type: str) -> str:
         """Extract text content from various file types"""
         try:
             print(f"Extracting content from {file_path} (type: {file_type})")
             
-            if file_type == 'text/plain' or file_path.endswith('.txt'):
+            if file_type == 'txt' or file_path.endswith('.txt'):
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
                     print(f"Extracted {len(content)} characters from text file")
                     return content
             
-            elif file_type == 'application/pdf' or file_path.endswith('.pdf'):
+            elif file_type == 'pdf' or file_path.endswith('.pdf'):
                 reader = PdfReader(file_path)
                 text = ""
                 for page in reader.pages:
@@ -123,8 +139,7 @@ class RAGEngine:
                 print(f"Extracted {len(text)} characters from PDF file")
                 return text
             
-            elif file_type in ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 
-                              'application/msword'] or file_path.endswith(('.docx', '.doc')):
+            elif file_type in ['docx', 'doc'] or file_path.endswith(('.docx', '.doc')):
                 doc = docx.Document(file_path)
                 text = ""
                 for paragraph in doc.paragraphs:
@@ -132,26 +147,37 @@ class RAGEngine:
                 print(f"Extracted {len(text)} characters from Word document")
                 return text
             
-            elif file_type.startswith('image/') or file_path.endswith(('.png', '.jpg', '.jpeg')):
+            elif file_type == 'image' or file_path.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')):
                 # OCR for images
-                image = Image.open(file_path)
-                text = pytesseract.image_to_string(image)
-                print(f"Extracted {len(text)} characters from image using OCR")
-                return text
+                try:
+                    image = Image.open(file_path)
+                    text = pytesseract.image_to_string(image)
+                    print(f"Extracted {len(text)} characters from image using OCR")
+                    return text
+                except Exception as ocr_error:
+                    print(f"OCR failed for image {file_path}: {ocr_error}")
+                    return f"Image file: {file_path} (OCR processing failed)"
             
             else:
                 # Fallback to plain text
                 print(f"Using fallback text extraction for {file_type}")
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    print(f"Extracted {len(content)} characters using fallback method")
-                    return content
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        print(f"Extracted {len(content)} characters using fallback method")
+                        return content
+                except UnicodeDecodeError:
+                    # Try with different encoding
+                    with open(file_path, 'r', encoding='latin-1') as f:
+                        content = f.read()
+                        print(f"Extracted {len(content)} characters using latin-1 encoding")
+                        return content
                     
         except Exception as e:
             print(f"Error extracting content from {file_path}: {e}")
             import traceback
             traceback.print_exc()
-            return ""
+            return f"Error reading file: {str(e)}"
     
     def _chunk_text(self, text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
         """Split text into overlapping chunks"""
@@ -182,16 +208,22 @@ class RAGEngine:
         """Create a unique namespace for a user's embeddings"""
         return f"user_{user_id}"
     
-    async def process_file(self, file_path: str, user_id: str, folder_id: Optional[str], 
-                          original_filename: str, file_type: str, storage_path: str = None) -> Dict[str, Any]:
+    async def process_file(self, file_path: str, filename: str, user_id: str, folder_id: Optional[str], 
+                          storage_path: str = None) -> Dict[str, Any]:
         """Process a file and store its chunks with embeddings in Pinecone"""
         try:
-            print(f"Starting file processing: {original_filename}")
+            # Initialize the RAG engine first
+            await self.initialize()
+            
+            print(f"Starting file processing: {filename}")
+            
+            # Determine file type from filename
+            file_type = self._get_file_type_from_filename(filename)
             
             # Extract content from file
             content = self._get_file_content(file_path, file_type)
             if not content.strip():
-                print(f"No content extracted from file: {original_filename}")
+                print(f"No content extracted from file: {filename}")
                 return {"success": False, "error": "No content extracted from file"}
             
             print(f"Extracted {len(content)} characters from file")
@@ -216,7 +248,7 @@ class RAGEngine:
             )
             
             if existing_files.matches:
-                print(f"File already exists: {original_filename}")
+                print(f"File already exists: {filename}")
                 return {"success": False, "error": "File already exists"}
             
             # Chunk the content
@@ -246,7 +278,7 @@ class RAGEngine:
                     "user_id": user_id,
                     "file_id": file_id,
                     "chunk_index": i,
-                    "original_filename": original_filename,
+                    "original_filename": filename,
                     "file_type": file_type,
                     "file_size": len(content),
                     "content_hash": content_hash,
@@ -270,18 +302,18 @@ class RAGEngine:
             # Batch upsert to Pinecone
             index.upsert(vectors=vectors, namespace=namespace)
             
-            print(f"Successfully uploaded file: {original_filename}")
+            print(f"Successfully uploaded file: {filename}")
             
             return {
                 "success": True,
                 "file_id": file_id,
                 "chunks_processed": len(chunks),
-                "original_filename": original_filename,
+                "original_filename": filename,
                 "content_hash": content_hash
             }
             
         except Exception as e:
-            print(f"Error processing file {original_filename}: {e}")
+            print(f"Error processing file {filename}: {e}")
             import traceback
             traceback.print_exc()
             return {"success": False, "error": str(e)}

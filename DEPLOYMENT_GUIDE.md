@@ -106,6 +106,8 @@ The backend is already configured with:
    livekit deploy livekit.yaml
    ```
 
+   **Note**: If the CLI package is not available, use the manual deployment method below.
+
 2. **Alternative: Manual Deployment**:
    - Use the LiveKit Cloud dashboard
    - Upload your `voice_agent_rag.py` file
