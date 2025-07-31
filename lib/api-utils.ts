@@ -30,7 +30,7 @@ export async function serverFetch<T = any>(
     'Content-Type': 'application/json',
   }
 
-  const response = await fetch(`${process.env.PYTHON_BACKEND_URL || 'http://localhost:8000'}${endpoint}`, {
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || process.env.PYTHON_BACKEND_URL || 'http://localhost:8000'}${endpoint}`, {
     ...options,
     headers: {
       ...defaultHeaders,

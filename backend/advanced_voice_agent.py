@@ -1,9 +1,8 @@
 from dotenv import load_dotenv
 import os
-import asyncio
 import json
 import re
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 
 from livekit import agents
@@ -12,13 +11,12 @@ from livekit.plugins import (
     openai,
     cartesia,
     deepgram,
-    silero,
+    noise_cancellation,
 )
-# Removed turn_detector import for compatibility
-from rag_engine import rag_engine
-from supabase import create_client
+from livekit.plugins import turn_detector
 
 load_dotenv()
+
 
 class VisualCommand:
     """Represents a visual generation command"""
@@ -27,8 +25,9 @@ class VisualCommand:
         self.topic = topic
         self.context = context
 
-class ClaraAssistantRAG(Agent):
-    def __init__(self, user_id: Optional[str] = None, class_id: Optional[str] = None) -> None:
+
+class ClaraAssistant(Agent):
+    def __init__(self, user_id: Optional[str] = None) -> None:
         super().__init__(
             instructions="""You are Clara, a helpful voice AI assistant designed to help students with their studies.
 
@@ -45,7 +44,6 @@ Your capabilities:
 - Use active recall and spaced repetition techniques
 - Provide study tips and learning strategies
 - Answer questions across various subjects
-- Access to student's uploaded learning materials for personalized help
 - Generate visual content (diagrams, flashcards, quizzes) based on voice commands
 
 Visual Generation Commands:
@@ -54,27 +52,16 @@ Visual Generation Commands:
 - "show quiz" or "test me" - Generate interactive quizzes
 - "visualize" or "show me" - Create visual representations
 
-Session Management:
-- Study sessions are limited to 10 minutes
-- When 3 minutes remain, start winding down the session
-- When 1 minute remains, ask the student to reteach key concepts
-- End each session by asking the student to summarize what they learned
-
 Keep responses conversational and engaging. Always encourage the student and celebrate their progress."""
         )
         
         self.user_id = user_id
-        self.class_id = class_id
         self.session_start_time = None
         self.session_duration = 600  # 10 minutes in seconds
         self.winding_down = False
         self.session_complete = False
-        
-        # In-memory storage for conversations (simplified)
-        self.conversations: Dict[str, List[Dict[str, Any]]] = {}
-        
-        # Initialize RAG engine (will be initialized async later)
-        self.rag_engine = rag_engine
+        self.multimodal_enabled = False
+        self.screen_sharing_active = False
         
         # Visual command patterns
         self.visual_commands = {
@@ -129,26 +116,25 @@ Keep responses conversational and engaging. Always encourage the student and cel
         
         return topic if topic else "current topic"
 
-    async def generate_visual_content(self, command: VisualCommand, session_context: str = "") -> Dict[str, Any]:
+    async def generate_visual_content(self, command: VisualCommand) -> Dict[str, Any]:
         """Generate visual content based on the command"""
         try:
             if command.command_type == 'diagram':
-                return await self.generate_diagram(command.topic, session_context)
+                return await self.generate_diagram(command.topic)
             elif command.command_type == 'flashcard':
-                return await self.generate_flashcards(command.topic, session_context)
+                return await self.generate_flashcards(command.topic)
             elif command.command_type == 'quiz':
-                return await self.generate_quiz(command.topic, session_context)
+                return await self.generate_quiz(command.topic)
             elif command.command_type == 'mindmap':
-                return await self.generate_mindmap(command.topic, session_context)
+                return await self.generate_mindmap(command.topic)
             else:
                 return {"error": f"Unknown command type: {command.command_type}"}
         except Exception as e:
             return {"error": f"Failed to generate {command.command_type}: {str(e)}"}
 
-    async def generate_diagram(self, topic: str, context: str = "") -> Dict[str, Any]:
+    async def generate_diagram(self, topic: str) -> Dict[str, Any]:
         """Generate a diagram for the given topic"""
         try:
-            # Mock diagram generation - in production, this would call an AI service
             diagram_data = {
                 "type": "diagram",
                 "title": f"Diagram: {topic.title()}",
@@ -171,10 +157,9 @@ Keep responses conversational and engaging. Always encourage the student and cel
         except Exception as e:
             return {"error": f"Failed to generate diagram: {str(e)}"}
 
-    async def generate_flashcards(self, topic: str, context: str = "") -> Dict[str, Any]:
+    async def generate_flashcards(self, topic: str) -> Dict[str, Any]:
         """Generate flashcards for the given topic"""
         try:
-            # Mock flashcard generation
             flashcard_data = {
                 "type": "flashcard",
                 "title": f"Flashcards: {topic.title()}",
@@ -204,10 +189,9 @@ Keep responses conversational and engaging. Always encourage the student and cel
         except Exception as e:
             return {"error": f"Failed to generate flashcards: {str(e)}"}
 
-    async def generate_quiz(self, topic: str, context: str = "") -> Dict[str, Any]:
+    async def generate_quiz(self, topic: str) -> Dict[str, Any]:
         """Generate a quiz for the given topic"""
         try:
-            # Mock quiz generation
             quiz_data = {
                 "type": "quiz",
                 "title": f"Quiz: {topic.title()}",
@@ -251,10 +235,9 @@ Keep responses conversational and engaging. Always encourage the student and cel
         except Exception as e:
             return {"error": f"Failed to generate quiz: {str(e)}"}
 
-    async def generate_mindmap(self, topic: str, context: str = "") -> Dict[str, Any]:
+    async def generate_mindmap(self, topic: str) -> Dict[str, Any]:
         """Generate a mindmap for the given topic"""
         try:
-            # Mock mindmap generation
             mindmap_data = {
                 "type": "mindmap",
                 "title": f"Mindmap: {topic.title()}",
@@ -280,85 +263,6 @@ Keep responses conversational and engaging. Always encourage the student and cel
             return mindmap_data
         except Exception as e:
             return {"error": f"Failed to generate mindmap: {str(e)}"}
-
-    async def initialize_rag_engine(self):
-        """Initialize the RAG engine for this user"""
-        try:
-            # Initialize RAG engine
-            await self.rag_engine.initialize()
-            print(f"[Voice Agent] RAG engine initialized for user {self.user_id}")
-        except Exception as e:
-            print(f"[Voice Agent] Error initializing RAG engine: {e}")
-
-    async def get_context_for_query(self, query: str) -> str:
-        """Get relevant context for a query using RAG"""
-        if not self.user_id:
-            return ""
-        
-        try:
-            # Get context from RAG engine
-            context = await self.rag_engine.get_context_for_query(
-                user_id=self.user_id,
-                query=query,
-                max_tokens=500
-            )
-            return context
-        except Exception as e:
-            print(f"[Voice Agent] Error getting context: {e}")
-            return ""
-
-    async def process_with_context(self, message: str) -> Dict[str, Any]:
-        """Process a message with RAG context and visual generation"""
-        if not self.user_id:
-            return {"text": message, "visual_content": None}
-        
-        try:
-            # First, check for visual commands
-            visual_command = self.detect_visual_command(message)
-            
-            if visual_command:
-                print(f"[Voice Agent] Detected visual command: {visual_command.command_type}")
-                
-                # Get context for visual generation
-                context = await self.get_context_for_query(message)
-                
-                # Generate visual content
-                visual_content = await self.generate_visual_content(visual_command, context)
-                
-                # Generate voice response for the visual content
-                voice_response = self.generate_voice_response_for_visual(visual_command, visual_content)
-                
-                return {
-                    "text": voice_response,
-                    "visual_content": visual_content,
-                    "command_type": visual_command.command_type
-                }
-            
-            # Regular text processing with RAG context
-            context = await self.get_context_for_query(message)
-            
-            if context:
-                enhanced_message = f"{message}\n\nContext: {context}"
-            else:
-                enhanced_message = message
-            
-            # For now, return a simple response
-            # In production, you'd call OpenAI API here
-            response = f"I understand you said: {message}. Let me help you with that."
-            
-            return {
-                "text": response,
-                "visual_content": None,
-                "command_type": None
-            }
-            
-        except Exception as e:
-            print(f"Error processing message with context: {e}")
-            return {
-                "text": "I'm having trouble processing that right now. Could you try again?",
-                "visual_content": None,
-                "command_type": None
-            }
 
     def generate_voice_response_for_visual(self, command: VisualCommand, visual_content: Dict[str, Any]) -> str:
         """Generate a voice response for visual content generation"""
@@ -395,40 +299,50 @@ Keep responses conversational and engaging. Always encourage the student and cel
         """Check if the session is complete"""
         return self.get_session_time_remaining() <= 0
 
-    async def get_session_management_prompt(self, message: str) -> str:
-        """Get session management prompt based on remaining time"""
-        remaining = self.get_session_time_remaining()
-        
-        if self.is_session_complete():
-            return f"{message}\n\nSession complete! Great work today. Please summarize what you learned."
-        elif self.should_request_reteaching():
-            return f"{message}\n\nWe have about 1 minute left. Can you reteach me the key concepts we covered?"
-        elif self.should_wind_down():
-            return f"{message}\n\nWe're winding down the session. Let's review what we've covered."
-        else:
-            return message
+    async def handle_multimodal_context(self, message: str, has_screen_context: bool = False) -> str:
+        """Handle messages with potential multimodal context"""
+        if has_screen_context and self.screen_sharing_active:
+            # Enhance the message with screen context awareness
+            enhanced_message = f"[Screen sharing active] {message}"
+            return enhanced_message
+        return message
 
-    async def speak_response(self, response: str, session: AgentSession):
-        """Speak the response using text-to-speech"""
-        try:
-            # Use the session's speak method to convert text to speech
-            await session.speak(response)
-            print(f"[Voice Agent] Spoke response: {response[:50]}...")
-        except Exception as e:
-            print(f"[Voice Agent] Error speaking response: {e}")
+    def set_multimodal_mode(self, enabled: bool):
+        """Enable or disable multimodal processing"""
+        self.multimodal_enabled = enabled
+        print(f"[Voice Agent] Multimodal mode {'enabled' if enabled else 'disabled'}")
+
+    def set_screen_sharing(self, active: bool):
+        """Set screen sharing status"""
+        self.screen_sharing_active = active
+        print(f"[Voice Agent] Screen sharing {'started' if active else 'stopped'}")
+
+    async def process_screen_context(self, screen_analysis: str) -> str:
+        """Process screen analysis and generate appropriate response"""
+        if not self.screen_sharing_active:
+            return ""
+        
+        # Generate contextual response based on screen content
+        if "error" in screen_analysis.lower() or "stuck" in screen_analysis.lower():
+            return "I can see you might be having some trouble. Let me help you with that!"
+        elif "code" in screen_analysis.lower() or "programming" in screen_analysis.lower():
+            return "I can see you're working on some code. Would you like me to help explain anything or review it with you?"
+        elif "study" in screen_analysis.lower() or "homework" in screen_analysis.lower():
+            return "I can see you're studying! I'm here to help if you have any questions."
+        
+        return ""
+
 
 async def entrypoint(ctx: agents.JobContext):
-    # Extract user_id and class_id from room metadata or name
+    # Extract user_id from room metadata or name
     room_name = ctx.room.name
     user_id = None
-    class_id = None
     
     # Try to extract user_id from room metadata
     if ctx.room.metadata:
         try:
             metadata = json.loads(ctx.room.metadata)
             user_id = metadata.get('user_id')
-            class_id = metadata.get('class_id')
         except:
             pass
     
@@ -446,111 +360,38 @@ async def entrypoint(ctx: agents.JobContext):
     print(f"[Voice Agent] Starting Clara AI agent for user: {user_id}")
     
     # Initialize the Clara AI agent
-    agent = ClaraAssistantRAG(user_id=user_id, class_id=class_id)
-    
-    # Initialize RAG engine
-    await agent.initialize_rag_engine()
+    agent = ClaraAssistant(user_id=user_id)
     
     # Start session timer
     agent.session_start_time = datetime.now()
     
     # Create agent session with LiveKit
-    async with AgentSession(
-        ctx,
-        agent,
-        input_options=RoomInputOptions(
-            audio=True,
-            video=False,
-            data=True,
+    session = AgentSession(
+        stt=deepgram.STT(model="nova-3", language="multi"),
+        llm=openai.LLM(model="gpt-4o-mini"),
+        tts=cartesia.TTS(model="sonic-2", voice="f786b574-daa5-4673-aa0c-cbe3e8534c02"),
+        vad=None,  # We'll use a different VAD approach
+        turn_detection=turn_detector.EOUPlugin(),
+    )
+
+    await session.start(
+        room=ctx.room,
+        agent=agent,
+        room_input_options=RoomInputOptions(
+            # LiveKit Cloud enhanced noise cancellation
+            # - If self-hosting, omit this parameter
+            # - For telephony applications, use `BVCTelephony` for best results
+            noise_cancellation=noise_cancellation.BVC(), 
         ),
-    ) as session:
-        print(f"[Voice Agent] Clara AI agent session started")
-        
-        # Send initial greeting
-        greeting = "Hello! I'm Clara, your AI study assistant. I'm here to help you with your studies. You can ask me questions, request visual content like diagrams or flashcards, or just chat about what you're learning. What would you like to work on today?"
-        await agent.speak_response(greeting, session)
-        
-        # Monitor session time
-        async def monitor_session():
-            while not agent.is_session_complete():
-                await asyncio.sleep(30)  # Check every 30 seconds
-                
-                if agent.should_wind_down() and not agent.winding_down:
-                    agent.winding_down = True
-                    wind_down_msg = "We're approaching the end of our session. Let's review what we've covered and make sure you understand the key concepts."
-                    await agent.speak_response(wind_down_msg, session)
-                
-                if agent.should_request_reteaching():
-                    reteach_msg = "We have about a minute left. Can you reteach me the main concepts we discussed? This will help reinforce your learning."
-                    await agent.speak_response(reteach_msg, session)
-                    break
-        
-        # Start session monitoring
-        monitor_task = asyncio.create_task(monitor_session())
-        
-        try:
-            # Main agent loop
-            async for event in session:
-                if event.type == "message":
-                    # Process incoming message
-                    message = event.data.get("text", "")
-                    print(f"[Voice Agent] Received message: {message}")
-                    
-                    # Process with context and visual generation
-                    response = await agent.process_with_context(message)
-                    
-                    # Speak the response
-                    await agent.speak_response(response["text"], session)
-                    
-                    # If visual content was generated, send it via data channel
-                    if response.get("visual_content"):
-                        await session.send_data({
-                            "type": "visual_content",
-                            "content": response["visual_content"],
-                            "command_type": response["command_type"]
-                        })
-                
-                elif event.type == "audio":
-                    # Handle audio input (speech-to-text)
-                    # For now, we'll process as text
-                    # In production, you'd use speech recognition here
-                    print(f"[Voice Agent] Received audio input")
-                    
-                    # Mock response for audio input
-                    audio_response = "I heard your audio message. Let me help you with that."
-                    await agent.speak_response(audio_response, session)
-                
-                elif event.type == "participant_joined":
-                    participant = event.participant
-                    print(f"[Voice Agent] Participant joined: {participant.identity}")
-                    
-                    if not participant.identity.startswith("clara"):
-                        # Human participant joined
-                        welcome_msg = f"Welcome {participant.identity}! I'm Clara, your AI study assistant. How can I help you today?"
-                        await agent.speak_response(welcome_msg, session)
-                
-                elif event.type == "participant_left":
-                    participant = event.participant
-                    print(f"[Voice Agent] Participant left: {participant.identity}")
-                    
-                    if not participant.identity.startswith("clara"):
-                        # Human participant left
-                        goodbye_msg = "Thank you for studying with me today! I hope our session was helpful. Don't forget to review what we covered."
-                        await agent.speak_response(goodbye_msg, session)
-        
-        except Exception as e:
-            print(f"[Voice Agent] Error in main loop: {e}")
-        
-        finally:
-            # Cancel session monitoring
-            monitor_task.cancel()
-            
-            # End session
-            if not agent.is_session_complete():
-                end_msg = "Our session is ending. Great work today! Remember to review what we covered and practice the concepts we discussed."
-                await agent.speak_response(end_msg, session)
-            
-            print(f"[Voice Agent] Clara AI agent session ended")
+    )
+
+    # Send initial greeting
+    await session.generate_reply(
+        instructions="Greet the user as Clara and offer your assistance with their studies. Mention that you can help with homework, explain concepts, and generate visual content like diagrams, flashcards, and quizzes."
+    )
+
+    print("[Voice Agent] Clara AI agent session started successfully")
+
 
 if __name__ == "__main__":
-    agents.run_app(entrypoint) 
+    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint)) 

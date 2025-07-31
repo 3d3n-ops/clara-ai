@@ -1,6 +1,14 @@
-livekit
-livekit-agents[openai,cartesia,deepgram,silero]
+# Simple Voice Agent Dependencies
+websockets
 python-dotenv
+asyncio
+
+# LiveKit Voice Agent Dependencies
+livekit-agents
+livekit-agents[deepgram]
+livekit-agents[openai]
+livekit-agents[cartesia]
+
 # Homework Agent Dependencies
 openai
 fastapi
@@ -20,4 +28,4 @@ aiofiles
 # Additional utilities
 python-jose[cryptography]
 passlib[bcrypt]
-supabase 
+supabase

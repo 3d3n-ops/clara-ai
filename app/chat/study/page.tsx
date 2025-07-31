@@ -5,15 +5,9 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Home, Folder, Settings, Send, Menu, X, Mic, Users, MessageSquare } from "lucide-react"
 import Link from "next/link"
-import { useLiveKit, generateLiveKitToken } from "@/hooks/use-livekit"
-import {
-  LiveKitRoom,
-  RoomAudioRenderer,
-  ControlBar,
-  ConnectionStateToast,
-} from "@livekit/components-react"
 import FileUpload from "@/components/homework/file-upload"
 import { usePageView, useUserTracking } from "@/hooks/use-analytics"
+import LiveKitVoiceRoom from "@/components/livekit-voice-room"
 
 // Client-side only wrapper to prevent hydration issues
 function ClientOnlyStudySessionPage() {
@@ -38,64 +32,28 @@ function ClientOnlyStudySessionPage() {
 }
 
 function StudySessionPageContent() {
-  const [roomName, setRoomName] = useState("")
-  const [token, setToken] = useState("")
-  const [participantName, setParticipantName] = useState("")
-  const [isConnecting, setIsConnecting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [isSessionActive, setIsSessionActive] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-
-  const { connect, disconnect, isConnected, connectionState } = useLiveKit()
   const { trackUserAction } = useUserTracking()
   
   // Track page view
   usePageView('Study Session')
 
-  useEffect(() => {
-    const sessionId = Math.random().toString(36).substring(7)
-    setRoomName(`study-session-${sessionId}`)
-    setParticipantName(`student-${sessionId}`)
-  }, [])
-
   const startVoiceSession = async () => {
-    if (!roomName || !participantName) return
-
-    setIsConnecting(true)
-    setError(null)
-
-    try {
-      const generatedToken = await generateLiveKitToken(roomName, participantName)
-      setToken(generatedToken)
-      
-      // Track voice session start
-      trackUserAction('voice_session_started', {
-        room_name: roomName,
-        participant_name: participantName,
-        session_type: 'study',
-      })
-    } catch (err) {
-      setError("Failed to start session. Please try again.")
-      setIsConnecting(false)
-      
-      // Track session start error
-      trackUserAction('voice_session_start_failed', {
-        room_name: roomName,
-        participant_name: participantName,
-        error: err instanceof Error ? err.message : 'Unknown error',
-      })
-    }
+    setIsSessionActive(true)
+    
+    // Track voice session start
+    trackUserAction('voice_session_started', {
+      session_type: 'study_websocket',
+    })
   }
 
   const endSession = () => {
-    setToken("")
-    setIsConnecting(false)
-    disconnect()
+    setIsSessionActive(false)
     
     // Track session end
     trackUserAction('voice_session_ended', {
-      room_name: roomName,
-      participant_name: participantName,
-      session_type: 'study',
+      session_type: 'study_websocket',
       session_duration: 'manual_end',
     })
   }
@@ -105,25 +63,14 @@ function StudySessionPageContent() {
     console.log(`File uploaded: ${filename} (ID: ${fileId})`)
   }
 
-  const serverUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL || "wss://clara-ai-voice.livekit.cloud"
-
-  if (token && serverUrl) {
+  if (isSessionActive) {
     return (
       <div className="min-h-screen bg-white">
-        <LiveKitRoom
-          video={false}
-          audio={true}
-          token={token}
-          serverUrl={serverUrl}
-          data-lk-theme="default"
-          style={{ height: "100vh" }}
-          onDisconnected={() => {
-            setToken("")
-            setIsConnecting(false)
-          }}
-        >
-          <MinimalVoiceRoom onEndSession={endSession} />
-        </LiveKitRoom>
+        <LiveKitVoiceRoom 
+          onEndSession={endSession}
+          sidebarCollapsed={sidebarCollapsed}
+          setSidebarCollapsed={setSidebarCollapsed}
+        />
       </div>
     )
   }
@@ -182,27 +129,11 @@ function StudySessionPageContent() {
               </p>
             </div>
 
-            {error && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 max-w-md mx-auto">
-                <p className="text-red-700 text-sm">{error}</p>
-              </div>
-            )}
-
-            {isConnecting && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 max-w-md mx-auto">
-                <div className="flex items-center justify-center gap-2 text-blue-700">
-                  <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
-                  <span className="text-sm font-medium">Connecting to Clara...</span>
-                </div>
-              </div>
-            )}
-
             <Button
               onClick={startVoiceSession}
-              disabled={isConnecting}
-              className="px-8 py-3 text-lg bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-all duration-300 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-8 py-3 text-lg bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-all duration-300 hover:scale-105"
             >
-              {isConnecting ? "Connecting..." : "Start Voice Session"}
+              Start Voice Session
             </Button>
           </div>
         </div>
@@ -225,84 +156,6 @@ function StudySessionPageContent() {
   )
 }
 
-// Minimal Voice Room Component
-function MinimalVoiceRoom({ onEndSession }: { onEndSession: () => void }) {
-  return (
-    <div className="h-screen flex flex-col bg-white">
-      {/* Header */}
-      <div className="bg-white p-4 border-b border-gray-200">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-            <h1 className="text-lg font-semibold text-gray-900">Study Session</h1>
-          </div>
 
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-gray-600 border-gray-300 hover:bg-gray-50"
-            >
-              <MessageSquare className="w-4 h-4" />
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-gray-600 border-gray-300 hover:bg-gray-50"
-            >
-              <Users className="w-4 h-4" />
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onEndSession}
-              className="text-red-600 border-red-300 hover:bg-red-50"
-            >
-              End Session
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col">
-        {/* Audio Renderer */}
-        <RoomAudioRenderer />
-
-        {/* Connection Toast */}
-        <ConnectionStateToast />
-
-        {/* Central Voice Display */}
-        <div className="flex-1 flex items-center justify-center p-8">
-          <div className="text-center space-y-6">
-            <div className="w-32 h-32 bg-gradient-to-b from-blue-400 to-blue-600 rounded-full flex items-center justify-center mx-auto shadow-lg">
-              <Mic className="w-16 h-16 text-white" />
-            </div>
-            <div>
-              <h2 className="text-2xl font-bold text-gray-900 mb-2">Clara is Ready!</h2>
-              <p className="text-gray-600">Start speaking to begin your study session</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Control Bar */}
-        <div className="p-4 bg-white border-t border-gray-200">
-          <ControlBar
-            variation="minimal"
-            controls={{
-              microphone: true,
-              camera: false,
-              chat: false,
-              screenShare: true,
-              leave: false,
-            }}
-          />
-        </div>
-      </div>
-    </div>
-  )
-}
 
 export default ClientOnlyStudySessionPage

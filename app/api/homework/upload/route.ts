@@ -105,21 +105,45 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Read file content
+    // Read file content with proper encoding handling
     console.log(`[Upload API] Reading file content...`)
     const arrayBuffer = await file.arrayBuffer()
-    const content = new TextDecoder().decode(arrayBuffer)
+    
+    // Determine if this is a text file or binary file
+    const isTextFile = file.type.startsWith('text/') || 
+                      file.name.endsWith('.txt') || 
+                      file.name.endsWith('.md') ||
+                      file.name.endsWith('.json') ||
+                      file.name.endsWith('.csv')
+    
+    let content: string
+    if (isTextFile) {
+      // For text files, decode as UTF-8
+      try {
+        content = new TextDecoder('utf-8').decode(arrayBuffer)
+      } catch (error) {
+        // Fallback to latin-1 if UTF-8 fails
+        content = new TextDecoder('latin-1').decode(arrayBuffer)
+      }
+    } else {
+      // For binary files (PDF, DOC, etc.), encode as base64
+      const uint8Array = new Uint8Array(arrayBuffer)
+      content = btoa(String.fromCharCode(...uint8Array))
+    }
+    
     console.log(`[Upload API] File content length: ${content.length} characters`)
+    console.log(`[Upload API] File type: ${isTextFile ? 'text' : 'binary'}`)
     
     // Prepare request body for Python backend with user_id
     const requestBody = {
       filename: file.name,
       content: content,
+      content_type: isTextFile ? 'text' : 'binary',
       folder_id: folderId || null,
       user_id: userId  // Add user_id to the request
     }
     
-    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8000'
+    const pythonBackendUrl = process.env.NEXT_PUBLIC_API_URL || process.env.PYTHON_BACKEND_URL || 'http://localhost:8000'
     
     console.log(`[Upload API] Uploading file ${file.name} for user ${userId} to folder ${folderId || 'none'}`)
     console.log(`[Upload API] Backend URL: ${pythonBackendUrl}`)

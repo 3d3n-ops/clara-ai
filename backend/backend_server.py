@@ -17,12 +17,14 @@ import time
 from hwk_agent_rag import HomeworkAgentRAG
 from voice_agent_rag import ClaraAssistantRAG, VisualCommand
 from rag_engine import rag_engine
+from voice_pipeline_backend import VoicePipelineBackend, initialize_voice_pipeline, get_voice_pipeline
 
 app = FastAPI(title="Clara AI Backend Server", version="1.0.0")
 
 # Production CORS settings - only allow your frontend domain
 ALLOWED_ORIGINS = [
     os.getenv('FRONTEND_URL', 'https://try-clara.vercel.app'),  # Production frontend
+    "https://www.clara-ai.org",  # Production frontend alternative
     "http://localhost:3000",  # Development only
     "http://localhost:3001",  # Development only
 ]
@@ -65,6 +67,7 @@ class ChatRequest(BaseModel):
 class FileUploadRequest(BaseModel):
     filename: str
     content: str
+    content_type: Optional[str] = "text"  # "text" or "binary"
     folder_id: Optional[str] = None
     user_id: Optional[str] = None
 
@@ -167,18 +170,51 @@ async def upload_file_rag(request: FileUploadRequest):
         
         print(f"[Backend] Processing upload request for user: {request.user_id}, file: {request.filename}")
         print(f"[Backend] File size: {len(request.content)} characters")
+        print(f"[Backend] Content type: {request.content_type}")
         print(f"[Backend] Folder ID: {request.folder_id or 'none'}")
         
-        # Create temporary file
+        # Create temporary file with proper encoding handling
         print(f"[Backend] Creating temporary file...")
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as temp_file:
-            temp_file.write(request.content)
-            temp_file_path = temp_file.name
+        
+        # Determine file extension based on filename
+        file_extension = os.path.splitext(request.filename)[1].lower()
+        
+        # Handle content based on content_type
+        if request.content_type == "binary":
+            # For binary content, decode from base64
+            import base64
+            try:
+                binary_content = base64.b64decode(request.content)
+                with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix=file_extension) as temp_file:
+                    temp_file.write(binary_content)
+                    temp_file_path = temp_file.name
+            except Exception as e:
+                print(f"[Backend] Error decoding base64 content: {e}")
+                raise HTTPException(status_code=400, detail=f"Invalid binary content: {str(e)}")
+        else:
+            # For text content, handle encoding properly
+            try:
+                # Try UTF-8 first
+                decoded_content = request.content.encode('utf-8')
+                with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix=file_extension) as temp_file:
+                    temp_file.write(decoded_content)
+                    temp_file_path = temp_file.name
+            except UnicodeEncodeError:
+                # Fallback to latin-1
+                binary_content = request.content.encode('latin-1')
+                with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix=file_extension) as temp_file:
+                    temp_file.write(binary_content)
+                    temp_file_path = temp_file.name
+                
         print(f"[Backend] Temporary file created: {temp_file_path}")
         
         try:
             # Process file with RAG engine
             print(f"[Backend] Calling RAG engine to process file...")
+            print(f"[Backend] File path: {temp_file_path}")
+            print(f"[Backend] File exists: {os.path.exists(temp_file_path)}")
+            print(f"[Backend] File size: {os.path.getsize(temp_file_path) if os.path.exists(temp_file_path) else 'N/A'} bytes")
+            
             result = await rag_engine.process_file(
                 file_path=temp_file_path,
                 filename=request.filename,
@@ -216,7 +252,16 @@ async def upload_file_rag(request: FileUploadRequest):
         print(f"[Backend] Error type: {type(e).__name__}")
         import traceback
         print(f"[Backend] Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        
+        # Provide more specific error messages
+        if "charmap" in str(e).lower() or "codec" in str(e).lower():
+            error_msg = "File encoding error. Please ensure the file is not corrupted."
+        elif "base64" in str(e).lower():
+            error_msg = "Invalid file format. Please try uploading the file again."
+        else:
+            error_msg = f"File processing error: {str(e)}"
+            
+        raise HTTPException(status_code=500, detail=error_msg)
 
 @app.get("/homework/files/{user_id}")
 async def get_user_files(
@@ -364,31 +409,72 @@ async def voice_websocket_endpoint(websocket: WebSocket, user_id: str):
                 await websocket.send_text(json.dumps(response_data))
                 
             elif message_type == "audio":
-                # Handle audio data (base64 encoded)
-                audio_data = message.get("audio", "")
-                # For now, we'll process as text
-                # In a full implementation, you'd decode and process audio
-                response = await agent.process_with_context("Audio message received")
+                # Handle audio data through voice pipeline
+                import base64
                 
-                response_data = {
-                    "type": "response",
-                    "text": response.get("text", "I received your audio message."),
-                    "timestamp": datetime.now().isoformat()
-                }
+                audio_data_b64 = message.get("audio", "")
+                if not audio_data_b64:
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "text": "No audio data received",
+                        "timestamp": datetime.now().isoformat()
+                    }))
+                    continue
                 
-                # Add visual content if generated
-                if response.get("visual_content"):
-                    response_data["visual_content"] = response["visual_content"]
-                    response_data["command_type"] = response.get("command_type")
-                
-                await websocket.send_text(json.dumps(response_data))
+                try:
+                    # Decode base64 audio data
+                    audio_data = base64.b64decode(audio_data_b64)
+                    
+                    # Get voice pipeline for this user
+                    voice_pipeline = await get_voice_pipeline()
+                    if not voice_pipeline:
+                        # Initialize voice pipeline for this user
+                        await initialize_voice_pipeline(user_id)
+                        voice_pipeline = await get_voice_pipeline()
+                    
+                    # Process through STT → LLM → TTS pipeline
+                    pipeline_result = await voice_pipeline.process_voice_input(audio_data)
+                    
+                    if "error" in pipeline_result:
+                        response_data = {
+                            "type": "response",
+                            "text": f"I'm sorry, I couldn't process that. {pipeline_result['error']}",
+                            "timestamp": datetime.now().isoformat()
+                        }
+                    else:
+                        response_data = {
+                            "type": "response",
+                            "text": pipeline_result["response_text"],
+                            "transcript": pipeline_result["transcript"],
+                            "audio_response": base64.b64encode(pipeline_result["response_audio"]).decode(),
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        
+                        # Add visual content if generated
+                        if pipeline_result.get("visual_content"):
+                            response_data["visual_content"] = pipeline_result["visual_content"]
+                            response_data["command_type"] = pipeline_result["command_type"]
+                    
+                    await websocket.send_text(json.dumps(response_data))
+                    
+                except Exception as e:
+                    print(f"[Voice WebSocket] Audio processing error: {e}")
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "text": f"Error processing audio: {str(e)}",
+                        "timestamp": datetime.now().isoformat()
+                    }))
                 
             elif message_type == "session_start":
                 # Initialize session
                 await agent.initialize_rag_engine()
+                
+                # Initialize voice pipeline for this user
+                await initialize_voice_pipeline(user_id)
+                
                 await websocket.send_text(json.dumps({
                     "type": "session_started",
-                    "message": "Session started. Ready to help with your studies! You can say commands like 'create diagram', 'make flashcards', or 'show quiz' to generate visual content.",
+                    "message": "Session started. Ready to help with your studies! You can speak commands like 'create diagram', 'make flashcards', or 'show quiz' to generate visual content.",
                     "timestamp": datetime.now().isoformat()
                 }))
                 

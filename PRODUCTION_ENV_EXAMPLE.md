@@ -14,7 +14,8 @@ NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/onboarding
 ## Backend Configuration
 ```env
 CLERK_SECRET_KEY=your_clerk_secret_key_here
-PYTHON_BACKEND_URL=https://your-backend-domain.com
+NEXT_PUBLIC_API_URL=https://clara-ai-kq0a.onrender.com
+PYTHON_BACKEND_URL=https://clara-ai-kq0a.onrender.com
 ```
 
 ## LiveKit Configuration

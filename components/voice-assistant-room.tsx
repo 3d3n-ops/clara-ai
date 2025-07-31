@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect, useCallback, Component, ReactNode } from 'react'
+import React, { useState, useEffect, useCallback, Component, ReactNode, useRef } from 'react'
 import {
   ControlBar,
   Chat,
@@ -20,6 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Progress } from "@/components/ui/progress"
+import { Input } from "@/components/ui/input"
 import { Home, Folder, Settings, Menu, X, MessageSquare, Monitor, Users, Mic, Volume2, Clock, Trophy, BookOpen, Lightbulb } from "lucide-react"
 import Link from "next/link"
 import { useUserTracking } from '@/hooks/use-analytics'
@@ -129,6 +130,12 @@ function VoiceAssistantRoomContent({
   const [visualCommandType, setVisualCommandType] = useState<string>('')
   const [showVisualContent, setShowVisualContent] = useState(false)
   
+  // Backend websocket connection
+  const [backendConnected, setBackendConnected] = useState(false)
+  const [backendMessages, setBackendMessages] = useState<string[]>([])
+  const websocketRef = useRef<WebSocket | null>(null)
+  const [userId] = useState(() => 'voice-user-' + Date.now()) // Generate a unique user ID
+  
   const { trackUserAction } = useUserTracking()
   
   // Wrap LiveKit hooks in try-catch to handle context errors
@@ -153,6 +160,84 @@ function VoiceAssistantRoomContent({
     console.error('LiveKit context error:', err)
     setError('Failed to initialize voice session. Please try refreshing the page.')
   }
+
+  // Connect to backend websocket for AI agent communication
+  useEffect(() => {
+    const connectToBackend = () => {
+      try {
+        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+        const wsUrl = backendUrl.replace('http', 'ws')
+        
+        const ws = new WebSocket(`${wsUrl}/voice/ws/${userId}`)
+        websocketRef.current = ws
+        
+        ws.onopen = () => {
+          console.log('Connected to backend voice websocket')
+          setBackendConnected(true)
+          
+          // Send session start message
+          ws.send(JSON.stringify({
+            type: 'session_start',
+            user_id: userId
+          }))
+        }
+        
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data)
+            console.log('Received message from backend:', data)
+            
+            if (data.type === 'response') {
+              setBackendMessages(prev => [...prev, data.text])
+              
+              // Handle visual content
+              if (data.visual_content) {
+                setCurrentVisualContent(data.visual_content)
+                setVisualCommandType(data.command_type)
+                setShowVisualContent(true)
+              }
+            } else if (data.type === 'session_started') {
+              setBackendMessages(prev => [...prev, data.message])
+            }
+          } catch (err) {
+            console.error('Error parsing websocket message:', err)
+          }
+        }
+        
+        ws.onerror = (error) => {
+          console.error('WebSocket error:', error)
+          setBackendConnected(false)
+        }
+        
+        ws.onclose = () => {
+          console.log('WebSocket connection closed')
+          setBackendConnected(false)
+        }
+        
+        return () => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.close()
+          }
+        }
+      } catch (err) {
+        console.error('Error connecting to backend websocket:', err)
+        setBackendConnected(false)
+      }
+    }
+    
+    connectToBackend()
+  }, [userId])
+
+  // Send message to backend when user speaks
+  const sendMessageToBackend = useCallback((message: string) => {
+    if (websocketRef.current && websocketRef.current.readyState === WebSocket.OPEN) {
+      websocketRef.current.send(JSON.stringify({
+        type: 'text',
+        text: message,
+        user_id: userId
+      }))
+    }
+  }, [userId])
 
   // If there's an error, show error UI
   if (error) {
@@ -491,6 +576,60 @@ function VoiceAssistantRoomContent({
                 </div>
               </div>
 
+              {/* Backend Chat Input */}
+              <div className="p-4 bg-gray-800 border-t border-gray-700">
+                <div className="flex items-center gap-4">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full ${backendConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+                      <span className="text-sm text-gray-300">
+                        {backendConnected ? 'AI Connected' : 'AI Disconnected'}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {/* Backend Messages */}
+                  {backendMessages.length > 0 && (
+                    <div className="flex-1 max-h-20 overflow-y-auto">
+                      {backendMessages.slice(-3).map((msg, index) => (
+                        <div key={index} className="text-sm text-gray-300 bg-gray-700 p-2 rounded mb-1">
+                          {msg}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                
+                {/* Text Input for Backend */}
+                <div className="flex items-center gap-2 mt-2">
+                  <input
+                    type="text"
+                    placeholder="Type a message to Clara..."
+                    className="flex-1 bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter' && e.currentTarget.value.trim()) {
+                        sendMessageToBackend(e.currentTarget.value.trim())
+                        e.currentTarget.value = ''
+                      }
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    onClick={(e) => {
+                      const input = e.currentTarget.previousElementSibling as HTMLInputElement
+                      if (input && input.value.trim()) {
+                        sendMessageToBackend(input.value.trim())
+                        input.value = ''
+                      }
+                    }}
+                    disabled={!backendConnected}
+                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600"
+                  >
+                    Send
+                  </Button>
+                </div>
+              </div>
+
               {/* Control Bar */}
               <div className="p-4 bg-gray-800">
                 <LiveKitErrorBoundary 
@@ -513,7 +652,7 @@ function VoiceAssistantRoomContent({
                         {showParticipants ? 'Hide Participants' : 'Show Participants'}
                       </Button>
                       <Button 
-                        variant="destructive" 
+                        variant="destructive"
                         onClick={handleEndSession}
                         className="flex items-center gap-2"
                       >
