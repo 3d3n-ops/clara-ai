@@ -1,0 +1,26 @@
+{
+  "session_start": "2025-08-01T14:00:32.686716",
+  "session_duration": 600,
+  "conversation_history": [
+    {
+      "role": "user",
+      "content": "who r u",
+      "timestamp": "2025-08-01T14:00:43.778771"
+    },
+    {
+      "role": "assistant",
+      "content": "I understand you're asking about 'who r u'. This is an interesting topic! Let me help you explore this further. What would you like to know specifically?",
+      "timestamp": "2025-08-01T14:00:43.780717"
+    },
+    {
+      "role": "user",
+      "content": "ok",
+      "timestamp": "2025-08-01T14:02:29.112879"
+    },
+    {
+      "role": "assistant",
+      "content": "I understand you're asking about 'ok'. This is an interesting topic! Let me help you explore this further. What would you like to know specifically?",
+      "timestamp": "2025-08-01T14:02:29.112879"
+    }
+  ]
+}

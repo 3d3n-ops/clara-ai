@@ -1,0 +1,12 @@
+# Local Voice Agent Requirements
+# Minimal dependencies for running the local voice agent script
+
+# Core dependencies
+asyncio
+pathlib
+typing
+
+# Optional: For enhanced functionality
+# aiofiles>=23.0.0  # For async file operations
+# rich>=13.0.0      # For better terminal output
+# click>=8.0.0      # For command line interface 

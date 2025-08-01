@@ -1,0 +1,26 @@
+{
+  "type": "flashcard",
+  "topic": "math",
+  "cards": [
+    {
+      "front": "What is math?",
+      "back": "math is a concept that helps us understand and organize information related to this subject."
+    },
+    {
+      "front": "How does math work?",
+      "back": "The process involves understanding the fundamentals, applying principles, and practicing regularly."
+    },
+    {
+      "front": "Why is math important?",
+      "back": "Understanding math is crucial because it provides a foundation for more advanced concepts and real-world applications."
+    },
+    {
+      "front": "What are the key components of math?",
+      "back": "The main components include basic principles, practical applications, and evaluation methods."
+    },
+    {
+      "front": "How can I improve my understanding of math?",
+      "back": "Practice regularly, ask questions, seek examples, and apply the concepts to real situations."
+    }
+  ]
+}

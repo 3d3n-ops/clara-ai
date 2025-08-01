@@ -1,0 +1,35 @@
+{
+  "type": "diagram",
+  "title": "Photosynthesis Process",
+  "elements": [
+    "Start",
+    "Research",
+    "Analyze",
+    "Implement",
+    "Review",
+    "Complete"
+  ],
+  "connections": [
+    {
+      "from": "Start",
+      "to": "Research"
+    },
+    {
+      "from": "Research",
+      "to": "Analyze"
+    },
+    {
+      "from": "Analyze",
+      "to": "Implement"
+    },
+    {
+      "from": "Implement",
+      "to": "Review"
+    },
+    {
+      "from": "Review",
+      "to": "Complete"
+    }
+  ],
+  "description": "A process diagram showing the steps for photosynthesis"
+}

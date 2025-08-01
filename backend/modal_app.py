@@ -374,65 +374,66 @@ async def livekit_entrypoint(ctx):
         from livekit.agents import llm
         from livekit.agents.pipeline import VoicePipelineAgent
         from livekit.plugins import openai, deepgram, silero, cartesia, noise_cancellation, turn_detector
-        from livekit.agents import AgentSession, Agent, RoomInputOptions
+        from livekit.agents.pipeline import AgentSession
+        from livekit.agents import RoomInputOptions
     
-    print(f"[Modal Agent] Connecting to room {ctx.room.name}")
-    
-    # Extract user_id from room metadata or name
-    room_name = ctx.room.name
-    user_id = None
-    
-    # Try to extract user_id from room metadata
-    if ctx.room.metadata:
-        try:
-            metadata = json.loads(ctx.room.metadata)
-            user_id = metadata.get('user_id')
-        except:
-            pass
-    
-    # If not in metadata, try to extract from room name
-    if not user_id:
-        # Room name format: "study-session-{user_id}" or "voice-{user_id}"
-        if 'study-session-' in room_name:
-            user_id = room_name.replace('study-session-', '')
-        elif 'voice-' in room_name:
-            user_id = room_name.replace('voice-', '')
-        else:
-            # Generate a default user_id
-            user_id = f"user-{datetime.now().timestamp()}"
-    
-    print(f"[Modal Agent] Starting Clara AI agent for user: {user_id}")
-    
-    # Initialize the Clara AI agent using the factory function
-    agent = create_clara_assistant(user_id=user_id)
-    
-    # Start session timer
-    agent.session_start_time = datetime.now()
-    
-    # Create agent session with LiveKit
-    session = AgentSession(
-        stt=deepgram.STT(model="nova-3", language="multi"),
-        llm=openai.LLM(model="gpt-4o-mini"),
-        tts=cartesia.TTS(model="sonic-2", voice="f786b574-daa5-4673-aa0c-cbe3e8534c02"),
-        vad=None,  # We'll use a different VAD approach
-        turn_detection=turn_detector.EOUPlugin(),
-    )
+        print(f"[Modal Agent] Connecting to room {ctx.room.name}")
+        
+        # Extract user_id from room metadata or name
+        room_name = ctx.room.name
+        user_id = None
+        
+        # Try to extract user_id from room metadata
+        if ctx.room.metadata:
+            try:
+                metadata = json.loads(ctx.room.metadata)
+                user_id = metadata.get('user_id')
+            except:
+                pass
+        
+        # If not in metadata, try to extract from room name
+        if not user_id:
+            # Room name format: "study-session-{user_id}" or "voice-{user_id}"
+            if 'study-session-' in room_name:
+                user_id = room_name.replace('study-session-', '')
+            elif 'voice-' in room_name:
+                user_id = room_name.replace('voice-', '')
+            else:
+                # Generate a default user_id
+                user_id = f"user-{datetime.now().timestamp()}"
+        
+        print(f"[Modal Agent] Starting Clara AI agent for user: {user_id}")
+        
+        # Initialize the Clara AI agent using the factory function
+        agent = create_clara_assistant(user_id=user_id)
+        
+        # Start session timer
+        agent.session_start_time = datetime.now()
+        
+        # Create agent session with LiveKit
+        session = AgentSession(
+            stt=deepgram.STT(model="nova-3", language="multi"),
+            llm=openai.LLM(model="gpt-4o-mini"),
+            tts=cartesia.TTS(model="sonic-2", voice="f786b574-daa5-4673-aa0c-cbe3e8534c02"),
+            vad=None,  # We'll use a different VAD approach
+            turn_detection=turn_detector.EOUPlugin(),
+        )
 
-    await session.start(
-        room=ctx.room,
-        agent=agent,
-        room_input_options=RoomInputOptions(
-            # LiveKit Cloud enhanced noise cancellation
-            noise_cancellation=noise_cancellation.BVC(), 
-        ),
-    )
+        await session.start(
+            room=ctx.room,
+            agent=agent,
+            room_input_options=RoomInputOptions(
+                # LiveKit Cloud enhanced noise cancellation
+                noise_cancellation=noise_cancellation.BVC(), 
+            ),
+        )
 
-    # Send initial greeting
-    await session.generate_reply(
-        instructions="Greet the user as Clara and offer your assistance with their studies. Mention that you can help with homework, explain concepts, and generate visual content like diagrams, flashcards, and quizzes."
-    )
+        # Send initial greeting
+        await session.generate_reply(
+            instructions="Greet the user as Clara and offer your assistance with their studies. Mention that you can help with homework, explain concepts, and generate visual content like diagrams, flashcards, and quizzes."
+        )
 
-    print("[Modal Agent] Clara AI agent session started successfully")
+        print("[Modal Agent] Clara AI agent session started successfully")
 
 
 @app.function(
@@ -500,4 +501,4 @@ async def run_livekit_agent(request: dict):
 
 
 if __name__ == "__main__":
-    app.run() 
+    app.run()

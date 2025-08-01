@@ -378,6 +378,11 @@ export default function DashboardPage() {
             <Button variant="outline" className="px-8 py-3 rounded-full bg-transparent" onClick={startHomeworkHelp}>
               Text AI study
             </Button>
+            <Link href="/elevenlabs-demo">
+              <Button variant="outline" className="px-8 py-3 rounded-full bg-transparent border-blue-300 text-blue-600 hover:bg-blue-50">
+                ElevenLabs Demo
+              </Button>
+            </Link>
           </div>
 
           {/* Motivational Message */}

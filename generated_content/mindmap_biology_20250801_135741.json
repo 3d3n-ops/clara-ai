@@ -1,0 +1,39 @@
+{
+  "type": "mindmap",
+  "topic": "biology",
+  "central_idea": "biology",
+  "branches": [
+    {
+      "main": "Definition",
+      "subtopics": [
+        "What it is",
+        "Key characteristics",
+        "Core principles"
+      ]
+    },
+    {
+      "main": "Applications",
+      "subtopics": [
+        "Real-world uses",
+        "Practical examples",
+        "Case studies"
+      ]
+    },
+    {
+      "main": "Learning Methods",
+      "subtopics": [
+        "Study techniques",
+        "Practice exercises",
+        "Assessment methods"
+      ]
+    },
+    {
+      "main": "Related Concepts",
+      "subtopics": [
+        "Prerequisites",
+        "Advanced topics",
+        "Connections"
+      ]
+    }
+  ]
+}

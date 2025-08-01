@@ -7,7 +7,7 @@ import { Home, Folder, Settings, Send, Menu, X, Mic, Users, MessageSquare } from
 import Link from "next/link"
 import FileUpload from "@/components/homework/file-upload"
 import { usePageView, useUserTracking } from "@/hooks/use-analytics"
-import LiveKitVoiceRoom from "@/components/livekit-voice-room"
+import ElevenLabsVoiceRoom from "@/components/elevenlabs-voice-room"
 
 // Client-side only wrapper to prevent hydration issues
 function ClientOnlyStudySessionPage() {
@@ -66,7 +66,7 @@ function StudySessionPageContent() {
   if (isSessionActive) {
     return (
       <div className="min-h-screen bg-white">
-        <LiveKitVoiceRoom 
+        <ElevenLabsVoiceRoom 
           onEndSession={endSession}
           sidebarCollapsed={sidebarCollapsed}
           setSidebarCollapsed={setSidebarCollapsed}
