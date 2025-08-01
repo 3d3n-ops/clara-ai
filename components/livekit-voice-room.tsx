@@ -128,7 +128,10 @@ export default function LiveKitVoiceRoom({
         }
 
         const data = await response.json()
-        setToken(data.token)
+        
+        // Ensure token is a string
+        const tokenString = typeof data.token === 'string' ? data.token : String(data.token)
+        setToken(tokenString)
       } catch (error) {
         console.error('Error getting LiveKit token:', error)
         setError(error instanceof Error ? error.message : 'Failed to connect')

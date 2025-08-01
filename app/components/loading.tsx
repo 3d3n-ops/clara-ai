@@ -1,3 +1,4 @@
+'use client'
 import { LoadingSpinner } from "./loading-spinner"
 
 export default function Loading() {

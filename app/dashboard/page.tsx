@@ -376,7 +376,7 @@ export default function DashboardPage() {
               Voice AI study
             </Button>
             <Button variant="outline" className="px-8 py-3 rounded-full bg-transparent" onClick={startHomeworkHelp}>
-              Homework help
+              Text AI study
             </Button>
           </div>
 
