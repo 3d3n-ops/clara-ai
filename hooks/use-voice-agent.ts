@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect, useCallback } from 'react'
-import { Room, RoomEvent, Participant } from 'livekit-client'
 
 interface VoiceAgentState {
   isConnected: boolean
@@ -9,108 +8,99 @@ interface VoiceAgentState {
   isProcessing: boolean
   error: string | null
   messages: string[]
+  visualContent: any | null
 }
 
 interface UseVoiceAgentProps {
   roomName?: string
   userId?: string
+  onVisualContentGenerated?: (content: any) => void
 }
 
-export function useVoiceAgent({ roomName, userId }: UseVoiceAgentProps = {}) {
+export function useVoiceAgent({ roomName, userId, onVisualContentGenerated }: UseVoiceAgentProps = {}) {
   const [state, setState] = useState<VoiceAgentState>({
     isConnected: false,
     isRecording: false,
     isProcessing: false,
     error: null,
-    messages: []
+    messages: [],
+    visualContent: null
   })
-  const [room, setRoom] = useState<Room | null>(null)
+  const [websocket, setWebsocket] = useState<WebSocket | null>(null)
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null)
 
-  // Get LiveKit token
-  const getLiveKitToken = useCallback(async (roomName: string, userId: string): Promise<string | null> => {
-    try {
-      const response = await fetch('/api/livekit/token', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          roomName,
-          userId,
-        }),
-      })
-      
-      if (response.ok) {
-        const data = await response.json()
-        return data.token
-      }
-      
-      return null
-    } catch (error) {
-      console.error('Error getting LiveKit token:', error)
-      return null
-    }
-  }, [])
-
-  // Connect to voice agent
+  // Connect to voice agent via WebSocket
   const connect = useCallback(async () => {
     try {
-      const livekitUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL || 'wss://your-livekit-instance.livekit.cloud'
-      const currentRoomName = roomName || `clara-demo-${Date.now()}`
-      const currentUserId = userId || `user-${Date.now()}`
+      const currentUserId = userId || `demo-user-${Date.now()}`
+      const backendUrl = process.env.NEXT_PUBLIC_API_URL || process.env.PYTHON_BACKEND_URL || 'http://localhost:8000'
+      const wsUrl = backendUrl.replace('http', 'ws')
       
-      const token = await getLiveKitToken(currentRoomName, currentUserId)
+      const ws = new WebSocket(`${wsUrl}/voice/ws/${currentUserId}`)
       
-      if (!token) {
-        setState(prev => ({ ...prev, error: 'Failed to get LiveKit token' }))
-        return
+      ws.onopen = () => {
+        console.log('Connected to voice agent')
+        setState(prev => ({ 
+          ...prev, 
+          isConnected: true, 
+          error: null,
+          messages: [...prev.messages, "Connected to Clara's voice session!"]
+        }))
+        setWebsocket(ws)
       }
-
-      // Create room instance
-      const newRoom = new Room()
       
-      // Connect to room
-      await newRoom.connect(livekitUrl, token, {
-        autoSubscribe: true,
-      })
-      
-      console.log('Connected to LiveKit room:', currentRoomName)
-      setRoom(newRoom)
-      setState(prev => ({ 
-        ...prev, 
-        isConnected: true, 
-        error: null,
-        messages: [...prev.messages, "Connected to Clara's voice session!"]
-      }))
-      
-      // Listen for participant events (when Clara agent joins)
-      newRoom.on(RoomEvent.ParticipantConnected, (participant: Participant) => {
-        console.log('Participant connected:', participant.identity)
-        if (participant.identity.includes('Clara') || participant.identity.includes('clara')) {
-          setState(prev => ({ 
-            ...prev, 
-            messages: [...prev.messages, "Clara has joined the session and is ready to help!"]
-          }))
-        }
-      })
-      
-      // Listen for data messages from the agent
-      newRoom.on(RoomEvent.DataReceived, (payload: Uint8Array, participant?: Participant) => {
+      ws.onmessage = (event) => {
         try {
-          const data = JSON.parse(new TextDecoder().decode(payload))
-          console.log('Received data from agent:', data)
+          const data = JSON.parse(event.data)
+          console.log('Received message from voice agent:', data)
           
           if (data.type === 'response') {
             setState(prev => ({ 
               ...prev, 
               messages: [...prev.messages, `Clara: ${data.text}`]
             }))
+            
+            // Handle visual content if generated
+            if (data.visual_content) {
+              const visualContent = {
+                type: data.command_type || 'diagram',
+                title: `Generated ${data.command_type || 'content'} from voice`,
+                content: data.visual_content,
+                timestamp: new Date()
+              }
+              setState(prev => ({ ...prev, visualContent }))
+              onVisualContentGenerated?.(visualContent)
+            }
+          } else if (data.type === 'session_started') {
+            setState(prev => ({ 
+              ...prev, 
+              messages: [...prev.messages, data.message]
+            }))
           }
         } catch (err) {
-          console.error('Error parsing agent message:', err)
+          console.error('Error parsing voice agent message:', err)
         }
-      })
-
+      }
+      
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error)
+        setState(prev => ({ 
+          ...prev, 
+          error: 'Failed to connect to voice agent' 
+        }))
+      }
+      
+      ws.onclose = () => {
+        console.log('Disconnected from voice agent')
+        setState(prev => ({ 
+          ...prev, 
+          isConnected: false,
+          isRecording: false,
+          isProcessing: false
+        }))
+        setWebsocket(null)
+      }
+      
     } catch (error) {
       console.error('Error connecting to voice agent:', error)
       setState(prev => ({ 
@@ -118,61 +108,129 @@ export function useVoiceAgent({ roomName, userId }: UseVoiceAgentProps = {}) {
         error: 'Failed to connect to voice agent' 
       }))
     }
-  }, [roomName, userId, getLiveKitToken])
+  }, [userId, onVisualContentGenerated])
 
   // Disconnect from voice agent
   const disconnect = useCallback(() => {
-    if (room) {
-      room.disconnect()
-      setRoom(null)
-      setState(prev => ({ 
-        ...prev, 
-        isConnected: false,
-        isRecording: false,
-        isProcessing: false
-      }))
+    if (websocket) {
+      websocket.close()
+      setWebsocket(null)
     }
-  }, [room])
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop()
+      setMediaRecorder(null)
+    }
+    setState(prev => ({ 
+      ...prev, 
+      isConnected: false,
+      isRecording: false,
+      isProcessing: false
+    }))
+  }, [websocket, mediaRecorder])
 
   // Toggle recording
-  const toggleRecording = useCallback(() => {
-    if (!room || !state.isConnected) {
+  const toggleRecording = useCallback(async () => {
+    if (!state.isConnected) {
       // If not connected, try to connect first
-      connect()
+      await connect()
       return
     }
 
-    setState(prev => ({ 
-      ...prev, 
-      isRecording: !prev.isRecording,
-      isProcessing: !prev.isRecording // Start processing when recording starts
-    }))
-
-    // Simulate processing delay
-    if (!state.isRecording) {
-      setTimeout(() => {
+    if (state.isRecording) {
+      // Stop recording
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop()
+        setMediaRecorder(null)
+      }
+      setState(prev => ({ 
+        ...prev, 
+        isRecording: false,
+        isProcessing: true
+      }))
+    } else {
+      // Start recording
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        const recorder = new MediaRecorder(stream)
+        
+        recorder.ondataavailable = async (event) => {
+          if (event.data.size > 0 && websocket) {
+            // Convert audio blob to base64
+            const arrayBuffer = await event.data.arrayBuffer()
+            const base64Audio = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+            
+            // Send audio data to voice agent
+            websocket.send(JSON.stringify({
+              type: 'audio',
+              audio: base64Audio
+            }))
+          }
+        }
+        
+        recorder.onstop = () => {
+          // Stop all tracks
+          stream.getTracks().forEach(track => track.stop())
+        }
+        
+        recorder.start()
+        setMediaRecorder(recorder)
         setState(prev => ({ 
           ...prev, 
-          isProcessing: false,
-          messages: [...prev.messages, "Clara: I heard you! How can I help with your studies today?"]
+          isRecording: true,
+          isProcessing: false
         }))
-      }, 2000)
+        
+        // Send session start message
+        if (websocket) {
+          websocket.send(JSON.stringify({
+            type: 'session_start'
+          }))
+        }
+        
+      } catch (error) {
+        console.error('Error starting recording:', error)
+        setState(prev => ({ 
+          ...prev, 
+          error: 'Failed to access microphone' 
+        }))
+      }
     }
-  }, [room, state.isConnected, state.isRecording, connect])
+  }, [state.isConnected, state.isRecording, state.isProcessing, websocket, mediaRecorder, connect])
+
+  // Send text message to voice agent
+  const sendTextMessage = useCallback((text: string) => {
+    if (websocket && state.isConnected) {
+      websocket.send(JSON.stringify({
+        type: 'text',
+        text: text
+      }))
+    }
+  }, [websocket, state.isConnected])
+
+  // Send visual generation command
+  const sendVisualCommand = useCallback((command: string, topic: string) => {
+    if (websocket && state.isConnected) {
+      websocket.send(JSON.stringify({
+        type: 'visual_command',
+        command: command,
+        topic: topic
+      }))
+    }
+  }, [websocket, state.isConnected])
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (room) {
-        room.disconnect()
-      }
+      disconnect()
     }
-  }, [room])
+  }, [disconnect])
 
   return {
     ...state,
     connect,
     disconnect,
-    toggleRecording
+    toggleRecording,
+    sendTextMessage,
+    sendVisualCommand
   }
 } 

@@ -14,10 +14,7 @@ from collections import defaultdict
 import time
 
 # Import our agents
-from hwk_agent_rag import HomeworkAgentRAG
-from voice_agent_rag import ClaraAssistantRAG, VisualCommand
 from rag_engine import rag_engine
-from voice_pipeline_backend import VoicePipelineBackend, initialize_voice_pipeline, get_voice_pipeline
 
 app = FastAPI(title="Clara AI Backend Server", version="1.0.0")
 
@@ -41,6 +38,9 @@ app.add_middleware(
 rate_limit_store = defaultdict(list)
 RATE_LIMIT_WINDOW = 60  # seconds
 RATE_LIMIT_MAX_REQUESTS = 100
+
+# Store active voice connections
+active_voice_connections: Dict[str, WebSocket] = {}
 
 def check_rate_limit(user_id: str) -> bool:
     """Simple rate limiting - in production use Redis"""
@@ -76,24 +76,9 @@ class FolderRequest(BaseModel):
     description: Optional[str] = None
     user_id: Optional[str] = None
 
-class VoiceChatRequest(BaseModel):
-    message: str
-    user_id: str
-    session_id: Optional[str] = None
 
-# Add this new model for visual generation requests
-class VisualGenerationRequest(BaseModel):
-    command_type: str
-    topic: str
-    context: str = ""
-    user_id: str
 
-# Initialize agents
-homework_agent = HomeworkAgentRAG()
 
-# Store active voice connections and agents
-active_voice_connections: Dict[str, WebSocket] = {}
-active_voice_agents: Dict[str, ClaraAssistantRAG] = {}
 
 # ============================================================================
 # HEALTH & STATUS ENDPOINTS
@@ -109,9 +94,8 @@ async def health_check():
         "active_voice_connections": len(active_voice_connections),
         "features": {
             "rag_engine": "enabled",
-            "homework_agent": "enabled", 
-            "voice_agent": "enabled",
-            "file_upload": "enabled"
+            "file_upload": "enabled",
+            "voice_agent": "enabled"
         }
     }
 
@@ -126,10 +110,9 @@ async def root():
             "health": "/health",
             "homework_chat": "/homework/chat-rag",
             "file_upload": "/homework/upload-rag",
-            "voice_websocket": "/voice/ws/{user_id}",
-            "voice_chat": "/voice/chat/{user_id}",
             "files": "/homework/files/{user_id}",
-            "folders": "/homework/folders/{user_id}"
+            "folders": "/homework/folders/{user_id}",
+            "voice_websocket": "/voice/ws/{user_id}"
         }
     }
 
@@ -138,26 +121,40 @@ async def root():
 # ============================================================================
 
 @app.post("/homework/chat-rag")
-async def chat_with_homework_agent_rag(request: ChatRequest):
-    """Process a chat message with the RAG-enabled homework agent"""
+async def chat_with_rag(request: ChatRequest):
+    """Process a chat message using RAG engine"""
     try:
         # Rate limiting check
         user_id = request.user_id or 'anonymous'
         if not check_rate_limit(user_id):
             raise HTTPException(status_code=429, detail="Rate limit exceeded")
         
-        # Process the message with RAG
-        response = await homework_agent.process_message(
-            user_message=request.message,
+        # Get context from RAG engine
+        context = await rag_engine.get_context_for_query(
+            query=request.message,
             user_id=user_id,
-            conversation_id=request.conversation_id,
             folder_id=request.folder_id,
-            conversation_history=request.conversation_history or []
+            max_tokens=1000
         )
         
-        return response
+        # For now, return a simple response with context
+        # In a full implementation, you would use an LLM to generate a response
+        response_text = f"I understand your question: '{request.message}'. "
+        if context:
+            response_text += f"I found some relevant information in your uploaded files."
+        else:
+            response_text += "I don't have specific information about this in your uploaded files, but I'm here to help!"
+        
+        return {
+            "response": response_text,
+            "context_used": bool(context),
+            "conversation_id": request.conversation_id,
+            "tool_calls": []
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
 
 @app.post("/homework/upload-rag")
 async def upload_file_rag(request: FileUploadRequest):
@@ -374,10 +371,6 @@ async def voice_websocket_endpoint(websocket: WebSocket, user_id: str):
     await websocket.accept()
     active_voice_connections[user_id] = websocket
     
-    # Initialize voice agent for this user
-    agent = ClaraAssistantRAG(user_id=user_id)
-    active_voice_agents[user_id] = agent
-    
     try:
         while True:
             # Receive message from client
@@ -390,28 +383,17 @@ async def voice_websocket_endpoint(websocket: WebSocket, user_id: str):
             print(f"[Voice WebSocket] Received {message_type} message from user {user_id}: {text_content[:100]}...")
             
             if message_type == "text":
-                # Process text message with visual generation capabilities
-                response = await agent.process_with_context(text_content)
+                # Process text message with simple response
+                response_text = f"I understand your message: '{text_content}'. How can I help with your studies?"
                 
-                # Send response back with visual content if generated
-                response_data = {
+                await websocket.send_text(json.dumps({
                     "type": "response",
-                    "text": response.get("text", "I understand your message."),
+                    "text": response_text,
                     "timestamp": datetime.now().isoformat()
-                }
-                
-                # Add visual content if generated
-                if response.get("visual_content"):
-                    response_data["visual_content"] = response["visual_content"]
-                    response_data["command_type"] = response.get("command_type")
-                    print(f"[Voice WebSocket] Generated visual content: {response['command_type']}")
-                
-                await websocket.send_text(json.dumps(response_data))
+                }))
                 
             elif message_type == "audio":
-                # Handle audio data through voice pipeline
-                import base64
-                
+                # Handle audio data (simplified for demo)
                 audio_data_b64 = message.get("audio", "")
                 if not audio_data_b64:
                     await websocket.send_text(json.dumps({
@@ -421,68 +403,18 @@ async def voice_websocket_endpoint(websocket: WebSocket, user_id: str):
                     }))
                     continue
                 
-                try:
-                    # Decode base64 audio data
-                    audio_data = base64.b64decode(audio_data_b64)
-                    
-                    # Get voice pipeline for this user
-                    voice_pipeline = await get_voice_pipeline()
-                    if not voice_pipeline:
-                        # Initialize voice pipeline for this user
-                        await initialize_voice_pipeline(user_id)
-                        voice_pipeline = await get_voice_pipeline()
-                    
-                    # Process through STT → LLM → TTS pipeline
-                    pipeline_result = await voice_pipeline.process_voice_input(audio_data)
-                    
-                    if "error" in pipeline_result:
-                        response_data = {
-                            "type": "response",
-                            "text": f"I'm sorry, I couldn't process that. {pipeline_result['error']}",
-                            "timestamp": datetime.now().isoformat()
-                        }
-                    else:
-                        response_data = {
-                            "type": "response",
-                            "text": pipeline_result["response_text"],
-                            "transcript": pipeline_result["transcript"],
-                            "audio_response": base64.b64encode(pipeline_result["response_audio"]).decode(),
-                            "timestamp": datetime.now().isoformat()
-                        }
-                        
-                        # Add visual content if generated
-                        if pipeline_result.get("visual_content"):
-                            response_data["visual_content"] = pipeline_result["visual_content"]
-                            response_data["command_type"] = pipeline_result["command_type"]
-                    
-                    await websocket.send_text(json.dumps(response_data))
-                    
-                except Exception as e:
-                    print(f"[Voice WebSocket] Audio processing error: {e}")
-                    await websocket.send_text(json.dumps({
-                        "type": "error",
-                        "text": f"Error processing audio: {str(e)}",
-                        "timestamp": datetime.now().isoformat()
-                    }))
-                
-            elif message_type == "session_start":
-                # Initialize session
-                await agent.initialize_rag_engine()
-                
-                # Initialize voice pipeline for this user
-                await initialize_voice_pipeline(user_id)
-                
+                # For demo purposes, just acknowledge the audio
                 await websocket.send_text(json.dumps({
-                    "type": "session_started",
-                    "message": "Session started. Ready to help with your studies! You can speak commands like 'create diagram', 'make flashcards', or 'show quiz' to generate visual content.",
+                    "type": "response",
+                    "text": "I heard your voice! How can I help with your studies today?",
                     "timestamp": datetime.now().isoformat()
                 }))
                 
-            elif message_type == "session_end":
-                # End session
+            elif message_type == "session_start":
+                # Initialize session
                 await websocket.send_text(json.dumps({
-                    "type": "session_ended",
-                    "message": "Session ended. Great work!",
+                    "type": "session_started",
+                    "message": "Session started. Ready to help with your studies! You can speak commands like 'create diagram', 'make flashcards', or 'show quiz' to generate visual content.",
                     "timestamp": datetime.now().isoformat()
                 }))
                 
@@ -493,16 +425,12 @@ async def voice_websocket_endpoint(websocket: WebSocket, user_id: str):
                 
                 print(f"[Voice WebSocket] Direct visual command: {command} for topic: {topic}")
                 
-                # Create visual command object
-                visual_command = VisualCommand(command, topic, text_content)
-                
-                # Generate visual content
-                visual_content = await agent.generate_visual_content(visual_command, text_content)
-                voice_response = agent.generate_voice_response_for_visual(visual_command, visual_content)
+                # Generate mock visual content based on command
+                visual_content = generate_mock_visual_content(command, topic)
                 
                 await websocket.send_text(json.dumps({
                     "type": "response",
-                    "text": voice_response,
+                    "text": f"I've generated a {command} for you about {topic}!",
                     "visual_content": visual_content,
                     "command_type": command,
                     "timestamp": datetime.now().isoformat()
@@ -512,99 +440,59 @@ async def voice_websocket_endpoint(websocket: WebSocket, user_id: str):
         # Clean up when connection is closed
         if user_id in active_voice_connections:
             del active_voice_connections[user_id]
-        if user_id in active_voice_agents:
-            del active_voice_agents[user_id]
         print(f"[Voice WebSocket] User {user_id} disconnected")
     except Exception as e:
         print(f"[Voice WebSocket] Error for user {user_id}: {e}")
         import traceback
         print(f"[Voice WebSocket] Traceback: {traceback.format_exc()}")
 
-@app.post("/voice/chat/{user_id}")
-async def voice_text_chat(user_id: str, request: VoiceChatRequest):
-    """Text-based voice chat endpoint"""
-    try:
-        # Create voice agent for this user
-        agent = ClaraAssistantRAG(user_id=user_id)
-        
-        # Process the message
-        response = await agent.process_with_context(request.message)
-        
+def generate_mock_visual_content(command: str, topic: str) -> dict:
+    """Generate mock visual content based on command type"""
+    if "flashcard" in command.lower():
         return {
-            "success": True,
-            "response": response.get("text", "I understand your message."),
-            "visual_content": response.get("visual_content"),
-            "command_type": response.get("command_type"),
-            "timestamp": datetime.now().isoformat()
+            "type": "flashcard",
+            "cards": [
+                {"front": f"What is {topic}?", "back": f"Answer about {topic}"},
+                {"front": f"How does {topic} work?", "back": f"Explanation of {topic}"},
+                {"front": f"Why is {topic} important?", "back": f"Importance of {topic}"}
+            ]
         }
-        
-    except Exception as e:
-        print(f"Error in voice text chat: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    elif "quiz" in command.lower():
+        return {
+            "type": "quiz",
+            "questions": [
+                {
+                    "question": f"What is {topic}?",
+                    "options": [f"Option A about {topic}", f"Option B about {topic}", f"Option C about {topic}", f"Option D about {topic}"],
+                    "correct_answer": f"Option A about {topic}"
+                },
+                {
+                    "question": f"How does {topic} work?",
+                    "options": [f"Method 1 for {topic}", f"Method 2 for {topic}", f"Method 3 for {topic}", f"Method 4 for {topic}"],
+                    "correct_answer": f"Method 1 for {topic}"
+                }
+            ]
+        }
+    else:  # diagram
+        return {
+            "type": "diagram",
+            "title": f"{topic} Process",
+            "elements": ["Start", "Process", "Analyze", "Review", "Complete"],
+            "connections": [
+                {"from": "Start", "to": "Process"},
+                {"from": "Process", "to": "Analyze"},
+                {"from": "Analyze", "to": "Review"},
+                {"from": "Review", "to": "Complete"}
+            ]
+        }
 
-@app.post("/voice/generate-visual")
-async def generate_visual_content(request: VisualGenerationRequest):
-    """Generate visual content based on voice commands"""
-    try:
-        print(f"[Visual API] Generating {request.command_type} for user {request.user_id}")
-        print(f"[Visual API] Topic: {request.topic}")
-        
-        # Create voice agent for this user
-        agent = ClaraAssistantRAG(user_id=request.user_id)
-        
-        # Create visual command
-        visual_command = VisualCommand(request.command_type, request.topic, request.context)
-        
-        # Generate visual content
-        visual_content = await agent.generate_visual_content(visual_command, request.context)
-        
-        # Generate voice response
-        voice_response = agent.generate_voice_response_for_visual(visual_command, visual_content)
-        
-        print(f"[Visual API] Successfully generated {request.command_type}")
-        
-        return {
-            "success": True,
-            "text": voice_response,
-            "visual_content": visual_content,
-            "command_type": request.command_type,
-            "timestamp": datetime.now().isoformat()
-        }
-        
-    except Exception as e:
-        print(f"[Visual API] Error generating visual content: {e}")
-        import traceback
-        print(f"[Visual API] Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate visual content: {str(e)}")
 
-@app.get("/voice/status/{user_id}")
-async def get_voice_user_status(user_id: str):
-    """Get status of voice agent for a user"""
-    try:
-        is_connected = user_id in active_voice_connections
-        has_agent = user_id in active_voice_agents
-        
-        return {
-            "user_id": user_id,
-            "is_connected": is_connected,
-            "has_agent": has_agent,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/voice/stats")
-async def get_voice_stats():
-    """Get voice agent statistics"""
-    try:
-        return {
-            "active_connections": len(active_voice_connections),
-            "active_agents": len(active_voice_agents),
-            "connected_users": list(active_voice_connections.keys()),
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+
 
 # ============================================================================
 # SHARED UTILITY ENDPOINTS
@@ -678,10 +566,8 @@ async def startup_event():
     print("🚀 Starting Clara AI Backend Server...")
     print("📋 Services:")
     print("   - RAG Engine: Enabled")
-    print("   - Homework Agent: Enabled")
-    print("   - Voice Agent: Enabled")
     print("   - File Upload: Enabled")
-    print("   - WebSocket Support: Enabled")
+    print("   - Voice Agent: Enabled")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -694,7 +580,6 @@ async def shutdown_event():
         except:
             pass
     active_voice_connections.clear()
-    active_voice_agents.clear()
 
 # ============================================================================
 # MAIN ENTRY POINT

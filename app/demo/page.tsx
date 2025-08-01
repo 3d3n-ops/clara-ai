@@ -15,7 +15,10 @@ export default function DemoPage() {
   // Voice agent for sections 2, 3, and 4
   const voiceAgent = useVoiceAgent({
     roomName: `clara-demo-section-${currentSection}`,
-    userId: `demo-user-${Date.now()}`
+    userId: `demo-user-${Date.now()}`,
+    onVisualContentGenerated: (content) => {
+      setVisualContent(content)
+    }
   })
 
   // Multimodal chat state for section 4
@@ -63,9 +66,14 @@ export default function DemoPage() {
 
   const toggleRecording = () => {
     setIsRecording(!isRecording)
-    // Integrate with LiveKit voice agent
+    // Integrate with voice agent
     voiceAgent.toggleRecording()
     console.log('Voice recording toggled:', !isRecording)
+  }
+
+  // Handle voice commands for visual content generation
+  const handleVoiceCommand = (command: string, topic: string) => {
+    voiceAgent.sendVisualCommand(command, topic)
   }
 
   const handleMultimodalSend = async () => {
@@ -506,8 +514,40 @@ export default function DemoPage() {
           </div>
         </div>
 
+        {/* Voice Command Buttons */}
+        <div className={`w-full max-w-7xl mt-4 transition-all duration-1000 ease-out delay-900 ${
+          isLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
+        }`}>
+          <div className="flex gap-2 justify-center mb-4">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleVoiceCommand("flashcard", "study methods")}
+              className="text-blue-600 border-blue-200 hover:bg-blue-50"
+            >
+              📚 Create Flashcards
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleVoiceCommand("quiz", "learning concepts")}
+              className="text-green-600 border-green-200 hover:bg-green-50"
+            >
+              ❓ Generate Quiz
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleVoiceCommand("diagram", "study process")}
+              className="text-purple-600 border-purple-200 hover:bg-purple-50"
+            >
+              📊 Make Diagram
+            </Button>
+          </div>
+        </div>
+
         {/* Chat Input Section */}
-        <div className={`w-full max-w-7xl mt-6 transition-all duration-1000 ease-out delay-900 ${
+        <div className={`w-full max-w-7xl mt-4 transition-all duration-1000 ease-out delay-900 ${
           isLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
         }`}>
           <div className="flex gap-2 items-center">
