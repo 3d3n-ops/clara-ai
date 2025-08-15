@@ -1,31 +1,11 @@
-# Simple Voice Agent Dependencies
-websockets
-python-dotenv
-asyncio
-
-# LiveKit Voice Agent Dependencies
-livekit-agents
-livekit-agents[deepgram]
-livekit-agents[openai]
-livekit-agents[cartesia]
-
-# Homework Agent Dependencies
-openai
+# Core FastAPI Dependencies
 fastapi
 uvicorn[standard]
 python-multipart
+python-dotenv
 
-# RAG System Dependencies
-pinecone>=7.0.0
-tiktoken
-PyPDF2
-python-docx
-Pillow
-pytesseract
-python-multipart
-aiofiles
+# WebSocket support
+websockets
 
-# Additional utilities
-python-jose[cryptography]
-passlib[bcrypt]
-supabase
+# Basic utilities
+asyncio
