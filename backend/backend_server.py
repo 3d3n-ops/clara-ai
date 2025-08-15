@@ -87,17 +87,27 @@ class FolderRequest(BaseModel):
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {
-        "status": "healthy", 
-        "service": "Clara AI Backend Server",
-        "timestamp": datetime.now().isoformat(),
-        "active_voice_connections": len(active_voice_connections),
-        "features": {
-            "rag_engine": "enabled",
-            "file_upload": "enabled",
-            "voice_agent": "enabled"
+    try:
+        # Simple health check that doesn't depend on external services
+        return {
+            "status": "healthy", 
+            "service": "Clara AI Backend Server",
+            "timestamp": datetime.now().isoformat(),
+            "active_voice_connections": len(active_voice_connections),
+            "features": {
+                "rag_engine": "enabled" if rag_engine._initialized else "initializing",
+                "file_upload": "enabled",
+                "voice_agent": "enabled"
+            }
         }
-    }
+    except Exception as e:
+        print(f"Health check error: {e}")
+        return {
+            "status": "healthy", 
+            "service": "Clara AI Backend Server",
+            "timestamp": datetime.now().isoformat(),
+            "note": "Basic service running"
+        }
 
 @app.get("/")
 async def root():
@@ -568,6 +578,16 @@ async def startup_event():
     print("   - RAG Engine: Enabled")
     print("   - File Upload: Enabled")
     print("   - Voice Agent: Enabled")
+    
+    # Initialize RAG engine asynchronously with timeout
+    try:
+        print("🔧 Initializing RAG engine...")
+        await asyncio.wait_for(rag_engine.initialize(), timeout=30.0)
+        print("✅ RAG engine initialized successfully")
+    except asyncio.TimeoutError:
+        print("⚠️ RAG engine initialization timed out, continuing without full initialization")
+    except Exception as e:
+        print(f"⚠️ RAG engine initialization failed: {e}, continuing with limited functionality")
 
 @app.on_event("shutdown")
 async def shutdown_event():

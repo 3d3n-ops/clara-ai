@@ -8,17 +8,20 @@
     "restartPolicyMaxRetries": 10,
     "healthcheckPath": "/health",
     "healthcheckTimeout": 300,
+    "startCommand": "cd backend && uvicorn backend_server:app --host 0.0.0.0 --port $PORT",
     "numReplicas": 1
   },
   "environments": {
     "production": {
       "variables": {
-        "LOG_LEVEL": "info"
+        "LOG_LEVEL": "info",
+        "ENVIRONMENT": "production"
       }
     },
     "development": {
       "variables": {
-        "LOG_LEVEL": "debug"
+        "LOG_LEVEL": "debug",
+        "ENVIRONMENT": "development"
       }
     }
   }
