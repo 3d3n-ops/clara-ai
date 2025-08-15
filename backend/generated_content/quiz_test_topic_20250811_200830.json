@@ -1,0 +1,32 @@
+{
+  "type": "quiz",
+  "topic": "test topic",
+  "title": "Knowledge Quiz: Test Topic",
+  "description": "Test your knowledge of test topic with this interactive quiz",
+  "questions": [
+    {
+      "question": "What is the main concept of test topic?",
+      "options": [
+        "A fundamental principle of test topic",
+        "An advanced technique in test topic",
+        "A historical aspect of test topic",
+        "A practical application of test topic"
+      ],
+      "correct_answer": 0,
+      "explanation": "This question tests your understanding of the core concept of test topic."
+    },
+    {
+      "question": "Which of the following best describes test topic?",
+      "options": [
+        "A simple concept",
+        "A complex system",
+        "A practical tool",
+        "An abstract theory"
+      ],
+      "correct_answer": 2,
+      "explanation": "This question evaluates your comprehension of test topic's practical nature."
+    }
+  ],
+  "generated_at": "20250811_200830",
+  "filename": "quiz_test_topic_20250811_200830.json"
+}

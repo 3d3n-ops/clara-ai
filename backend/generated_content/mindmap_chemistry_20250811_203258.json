@@ -1,0 +1,63 @@
+{
+  "type": "mindmap",
+  "topic": "chemistry",
+  "title": "Mind Map: Chemistry",
+  "description": "A comprehensive mind map exploring chemistry and related concepts",
+  "nodes": [
+    {
+      "id": "main",
+      "text": "chemistry",
+      "type": "central",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "sub1",
+      "text": "Concept 1: chemistry basics",
+      "type": "subtopic",
+      "position": {
+        "x": -200,
+        "y": -100
+      },
+      "parent": "main"
+    },
+    {
+      "id": "sub2",
+      "text": "Concept 2: chemistry applications",
+      "type": "subtopic",
+      "position": {
+        "x": 200,
+        "y": -100
+      },
+      "parent": "main"
+    },
+    {
+      "id": "sub3",
+      "text": "Concept 3: chemistry examples",
+      "type": "subtopic",
+      "position": {
+        "x": 0,
+        "y": 100
+      },
+      "parent": "main"
+    }
+  ],
+  "connections": [
+    {
+      "from": "main",
+      "to": "sub1"
+    },
+    {
+      "from": "main",
+      "to": "sub2"
+    },
+    {
+      "from": "main",
+      "to": "sub3"
+    }
+  ],
+  "generated_at": "20250811_203258",
+  "filename": "mindmap_chemistry_20250811_203258.json"
+}

@@ -1,0 +1,36 @@
+# Ignore frontend files for Railway deployment
+# Railway should only deploy the backend
+
+# Frontend directories
+app/
+components/
+hooks/
+lib/
+public/
+styles/
+.next/
+
+# Frontend files
+package.json
+package-lock.json
+pnpm-lock.yaml
+next.config.mjs
+tailwind.config.ts
+postcss.config.mjs
+tsconfig.json
+components.json
+
+# Development files
+.cursor/
+node_modules/
+
+# Documentation and scripts
+*.md
+*.bat
+*.ps1
+*.sh
+
+# Keep only backend files
+!backend/
+!railway.json
+!.railwayignore

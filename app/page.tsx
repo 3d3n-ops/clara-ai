@@ -48,6 +48,9 @@ export default function LandingPage() {
             <Link href="/pricing" className="text-gray-600 hover:text-gray-900">
               Pricing
             </Link>
+            <Link href="/modal-test" className="text-gray-600 hover:text-gray-900">
+              Modal Test
+            </Link>
             <AuthButtons />
           </div>
         </div>

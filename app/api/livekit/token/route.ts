@@ -45,7 +45,11 @@ export async function POST(request: NextRequest) {
     // Generate token
     const token = await at.toJwt()
 
-    return NextResponse.json({ token })
+    // Return both token and wsUrl for frontend connection
+    return NextResponse.json({ 
+      token,
+      wsUrl: livekitUrl
+    })
   } catch (error) {
     console.error('Error generating LiveKit token:', error)
     return NextResponse.json(

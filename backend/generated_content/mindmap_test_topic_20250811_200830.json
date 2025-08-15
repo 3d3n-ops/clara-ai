@@ -1,0 +1,63 @@
+{
+  "type": "mindmap",
+  "topic": "test topic",
+  "title": "Mind Map: Test Topic",
+  "description": "A comprehensive mind map exploring test topic and related concepts",
+  "nodes": [
+    {
+      "id": "main",
+      "text": "test topic",
+      "type": "central",
+      "position": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": "sub1",
+      "text": "Concept 1: test topic basics",
+      "type": "subtopic",
+      "position": {
+        "x": -200,
+        "y": -100
+      },
+      "parent": "main"
+    },
+    {
+      "id": "sub2",
+      "text": "Concept 2: test topic applications",
+      "type": "subtopic",
+      "position": {
+        "x": 200,
+        "y": -100
+      },
+      "parent": "main"
+    },
+    {
+      "id": "sub3",
+      "text": "Concept 3: test topic examples",
+      "type": "subtopic",
+      "position": {
+        "x": 0,
+        "y": 100
+      },
+      "parent": "main"
+    }
+  ],
+  "connections": [
+    {
+      "from": "main",
+      "to": "sub1"
+    },
+    {
+      "from": "main",
+      "to": "sub2"
+    },
+    {
+      "from": "main",
+      "to": "sub3"
+    }
+  ],
+  "generated_at": "20250811_200830",
+  "filename": "mindmap_test_topic_20250811_200830.json"
+}

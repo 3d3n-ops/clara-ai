@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import {
   LiveKitRoom,
   RoomAudioRenderer,
@@ -12,11 +12,11 @@ import {
 import "@livekit/components-styles"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { Mic, MicOff, Phone, PhoneOff, Volume2, Home, Monitor, MonitorOff } from "lucide-react"
+import { Mic, MicOff, Phone, PhoneOff, Volume2, Home, Monitor, MonitorOff, Send } from "lucide-react"
 import Link from "next/link"
 import MultimodalChat from "./multimodal-chat"
 
-interface LiveKitVoiceRoomProps {
+interface ModalLiveKitVoiceRoomProps {
   onEndSession: () => void
   sidebarCollapsed: boolean
   setSidebarCollapsed: (collapsed: boolean) => void
@@ -87,11 +87,11 @@ function VoiceAssistantDemo({
   )
 }
 
-export default function LiveKitVoiceRoom({ 
+export default function ModalLiveKitVoiceRoom({ 
   onEndSession, 
   sidebarCollapsed, 
   setSidebarCollapsed 
-}: LiveKitVoiceRoomProps) {
+}: ModalLiveKitVoiceRoomProps) {
   const [token, setToken] = useState("")
   const [connecting, setConnecting] = useState(false)
   const [error, setError] = useState("")
@@ -108,7 +108,7 @@ export default function LiveKitVoiceRoom({
         const roomName = `clara-study-${Date.now()}`
         const participantName = `student-${Math.random().toString(36).substr(2, 9)}`
         
-        console.log(`[LiveKit] Creating room: ${roomName}`)
+        console.log(`[Local LiveKit] Creating room: ${roomName}`)
         
         // First, ensure the Modal agent is started for this room
         try {
@@ -124,13 +124,13 @@ export default function LiveKitVoiceRoom({
           })
           
           if (modalResponse.ok) {
-            console.log(`[LiveKit] Modal agent started for room: ${roomName}`)
+            console.log(`[Local LiveKit] Modal agent started for room: ${roomName}`)
           } else {
-            console.warn(`[LiveKit] Modal agent start failed: ${modalResponse.status}`)
+            console.warn(`[Local LiveKit] Modal agent start failed: ${modalResponse.status}`)
             // Don't fail the connection - the webhook might still work
           }
         } catch (modalError) {
-          console.warn(`[LiveKit] Modal agent start error:`, modalError)
+          console.warn(`[Local LiveKit] Modal agent start error:`, modalError)
           // Don't fail the connection - the webhook might still work
         }
         
@@ -160,7 +160,7 @@ export default function LiveKitVoiceRoom({
         const tokenString = typeof data.token === 'string' ? data.token : String(data.token)
         setToken(tokenString)
         
-        console.log(`[LiveKit] Token generated for room: ${roomName}`)
+        console.log(`[Local LiveKit] Token generated for room: ${roomName}`)
         
       } catch (error) {
         console.error('Error getting LiveKit token:', error)
@@ -173,7 +173,7 @@ export default function LiveKitVoiceRoom({
     getToken()
   }, [])
 
-    const handleScreenShareToggle = async () => {
+  const handleScreenShareToggle = async () => {
     if (isScreenSharing) {
       // Stop screen sharing
       if (screenStream) {
@@ -181,12 +181,6 @@ export default function LiveKitVoiceRoom({
         setScreenStream(null)
       }
       setIsScreenSharing(false)
-      
-      // Remove debug video
-      const debugVideo = document.querySelector('video[style*="border: 2px solid red"]')
-      if (debugVideo) {
-        debugVideo.remove()
-      }
     } else {
       // Start screen sharing
       try {
@@ -199,152 +193,47 @@ export default function LiveKitVoiceRoom({
         
         setScreenStream(stream)
         setIsScreenSharing(true)
-
-        // Handle when user stops sharing via browser UI
+        
+        // Handle stream ending
         stream.getVideoTracks()[0].onended = () => {
-          setIsScreenSharing(false)
           setScreenStream(null)
-          
-          // Remove debug video
-          const debugVideo = document.querySelector('video[style*="border: 2px solid red"]')
-          if (debugVideo) {
-            debugVideo.remove()
-          }
+          setIsScreenSharing(false)
         }
-
-        // Start processing screen frames
-        startScreenProcessing(stream)
-      } catch (error) {
-        console.error('Error starting screen share:', error)
-        setError('Failed to start screen sharing. Please try again.')
+        
+      } catch (err) {
+        console.error('[Local LiveKit] Failed to start screen sharing:', err)
+        setError('Failed to start screen sharing')
       }
     }
   }
 
-  const startScreenProcessing = (stream: MediaStream) => {
-    // Create a debug video element to see what we're capturing
-    const debugVideo = document.createElement('video')
-    debugVideo.srcObject = stream
-    debugVideo.autoplay = true
-    debugVideo.muted = true
-    debugVideo.style.position = 'fixed'
-    debugVideo.style.top = '10px'
-    debugVideo.style.right = '10px'
-    debugVideo.style.width = '200px'
-    debugVideo.style.height = '150px'
-    debugVideo.style.border = '2px solid red'
-    debugVideo.style.zIndex = '9999'
-    debugVideo.style.backgroundColor = 'black'
-    document.body.appendChild(debugVideo)
-    
-    const canvas = document.createElement('canvas')
-    const ctx = canvas.getContext('2d')
-
-    let lastFrameTime = 0
-    const frameInterval = 3000 // Process frame every 3 seconds
-    let processingFrame = false
-
-    const processFrame = async () => {
-      // Check if stream is still active (more reliable than React state)
-      const streamActive = stream.getVideoTracks().length > 0 && 
-                          stream.getVideoTracks()[0].readyState === 'live'
-      
-      if (!streamActive || !ctx || processingFrame) {
-        if (streamActive) {
-          setTimeout(processFrame, 100) // Retry in 100ms
-        }
-        return
-      }
-
-      const now = Date.now()
-      if (now - lastFrameTime < frameInterval) {
-        setTimeout(processFrame, 100)
-        return
-      }
-
-      // Check if video has valid dimensions
-      if (debugVideo.videoWidth === 0 || debugVideo.videoHeight === 0) {
-        setTimeout(processFrame, 100)
-        return
-      }
-
-      processingFrame = true
-      lastFrameTime = now
-      
-      try {
-        // Capture frame with better quality
-        canvas.width = Math.min(debugVideo.videoWidth, 1920) // Increased resolution
-        canvas.height = Math.min(debugVideo.videoHeight, 1080) // Increased resolution
-        
-        // Draw the video directly to canvas without scaling
-        ctx.drawImage(debugVideo, 0, 0, canvas.width, canvas.height)
-        
-        // Convert to base64 with higher quality
-        const frameData = canvas.toDataURL('image/jpeg', 0.8) // Increased quality
-        
-        // Send to Gemini for analysis
-        await processScreenFrame(frameData)
-      } catch (error) {
-        console.error('Frame processing error:', error)
-      } finally {
-        processingFrame = false
-      }
-
-      // Schedule next frame
-      setTimeout(processFrame, frameInterval)
-    }
-
-    // Wait for video to be ready
-    debugVideo.addEventListener('loadedmetadata', () => {
-      // Wait a bit longer for video to be fully loaded
-      setTimeout(() => {
-        processFrame()
-      }, 2000) // Start processing after 2 seconds
-    })
-
-    // Handle video errors
-    debugVideo.addEventListener('error', (e: Event) => {
-      console.error('Video error:', e)
-    })
-  }
-
-  const processScreenFrame = async (frameData: string) => {
+  // End session and clean up
+  const handleEndSession = useCallback(async () => {
     try {
-      const response = await fetch('/api/multimodal/screen-analysis', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          image: frameData,
-          context: 'study_session'
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      // Stop screen sharing if active
+      if (screenStream) {
+        screenStream.getTracks().forEach(track => track.stop())
+        setScreenStream(null)
+        setIsScreenSharing(false)
       }
-
-      const data = await response.json()
       
-      if (data.analysis) {
-        // Always store the analysis for chat context, regardless of shouldRespond
-        if ((window as any).addScreenshotMessage) {
-          (window as any).addScreenshotMessage(frameData, data.analysis, data.shouldRespond)
-        }
-      }
-    } catch (error) {
-      console.error('Error processing screen frame:', error)
-      // Don't throw - just log and continue
+      // Call local backend to end session (if we have room info)
+      // Note: In LiveKit, the room disconnection is handled automatically
+      console.log('[Local LiveKit] Session ended')
+    } catch (err) {
+      console.error('[Local LiveKit] Failed to end session:', err)
+    } finally {
+      // Call the parent's end session handler
+      onEndSession()
     }
-  }
+  }, [screenStream, onEndSession])
 
   if (connecting) {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="text-gray-600">Connecting to Clara...</p>
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Connecting to local LiveKit agent...</p>
         </div>
       </div>
     )
@@ -387,7 +276,7 @@ export default function LiveKitVoiceRoom({
         serverUrl={process.env.NEXT_PUBLIC_LIVEKIT_URL}
         data-lk-theme="default"
         style={{ height: "100vh" }}
-        onDisconnected={onEndSession}
+        onDisconnected={handleEndSession}
         onError={(error) => {
           console.error('LiveKit room error:', error)
           setError(`Room error: ${error.message}`)
@@ -412,7 +301,7 @@ export default function LiveKitVoiceRoom({
             <div className="flex-1 flex flex-col">
               <div className="flex-1 flex items-center justify-center p-8">
                 <VoiceAssistantDemo 
-                  onEndSession={onEndSession}
+                  onEndSession={handleEndSession}
                   isScreenSharing={isScreenSharing}
                   onScreenShareToggle={handleScreenShareToggle}
                 />
@@ -457,4 +346,4 @@ export default function LiveKitVoiceRoom({
       </LiveKitRoom>
     </div>
   )
-}
+} 
