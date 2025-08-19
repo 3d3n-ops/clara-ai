@@ -1,358 +1,211 @@
 "use client"
 
-import React, { useState, useEffect, useCallback } from 'react'
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
-import { Mic, Volume2, MessageSquare, Users, Play, Square, Brain, FileText, BarChart3 } from "lucide-react"
-import { useClaraVoiceSession, VisualContent } from "@/hooks/use-clara-voice-session"
+import React, { useState, useEffect, useRef } from 'react'
+import { 
+  Room, 
+  RoomEvent, 
+  RemoteParticipant, 
+  LocalTrackPublication,
+  RemoteTrackPublication
+} from 'livekit-client'
 
 interface ModalVoiceRoomProps {
   onEndSession: () => void
 }
 
-function ModalVoiceRoomContent({ onEndSession }: ModalVoiceRoomProps) {
-  const [userId] = useState(() => 'user-' + Date.now())
-  const [inputMessage, setInputMessage] = useState('')
-  const [isMicrophoneEnabled, setIsMicrophoneEnabled] = useState(false)
-  const [isListening, setIsListening] = useState(false)
+export default function ModalVoiceRoom({ onEndSession }: ModalVoiceRoomProps) {
+  const [isConnected, setIsConnected] = useState(false)
+  const [isConnecting, setIsConnecting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [isMuted, setIsMuted] = useState(false)
+  const [hasAgent, setHasAgent] = useState(false)
+  
+  const roomRef = useRef<Room | null>(null)
+  const audioRef = useRef<HTMLAudioElement>(null)
 
-  // Use the new Clara voice session hook
-  const {
-    status,
-    messages,
-    currentVisualContent,
-    showVisualContent,
-    startSession,
-    endSession,
-    sendTextMessage,
-    requestVisualContent,
-    enableMicrophone,
-    disableMicrophone,
-    setShowVisualContent,
-    setCurrentVisualContent
-  } = useClaraVoiceSession({
-    userId,
-    wsUrl: process.env.NEXT_PUBLIC_LIVEKIT_URL
-  })
+  const connectToRoom = async () => {
+    if (isConnecting) return
+    
+    setIsConnecting(true)
+    setError(null)
 
-  // Handle session start
-  const handleStartSession = async () => {
-    const result = await startSession()
-    if (result.success) {
-      console.log('Clara session started successfully')
-    } else {
-      console.error('Failed to start session:', result.error)
+    try {
+      // Generate a random room name and user ID
+      const roomName = `study-room-${Date.now()}`
+      const userId = `user-${Math.random().toString(36).substr(2, 9)}`
+
+      console.log('Requesting token for room:', roomName)
+
+      // Get token from your API
+      const response = await fetch('/api/livekit/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomName, participantName: userId })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to get token')
+      }
+
+      const { token, wsUrl } = await response.json()
+      console.log('Got token, connecting to:', wsUrl)
+
+      // Create and connect to room
+      const room = new Room({
+        adaptiveStream: true,
+        dynacast: true,
+      })
+
+      roomRef.current = room
+
+      // Set up room event listeners
+      room.on(RoomEvent.Connected, () => {
+        console.log('Connected to room')
+        setIsConnected(true)
+        setIsConnecting(false)
+      })
+
+      room.on(RoomEvent.Disconnected, () => {
+        console.log('Disconnected from room')
+        setIsConnected(false)
+        cleanup()
+      })
+
+      room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
+        console.log('Participant connected:', participant.identity)
+        if (participant.identity.includes('agent')) {
+          setHasAgent(true)
+          console.log('Agent joined the room!')
+        }
+      })
+
+      room.on(RoomEvent.TrackSubscribed, (track, publication: RemoteTrackPublication) => {
+        console.log('Track subscribed:', track.kind)
+        if (track.kind === 'audio' && audioRef.current) {
+          track.attach(audioRef.current)
+        }
+      })
+
+      room.on(RoomEvent.TrackUnsubscribed, (track) => {
+        console.log('Track unsubscribed:', track.kind)
+        track.detach()
+      })
+
+      // Connect to the room
+      await room.connect(wsUrl, token)
+      
+      // Enable microphone
+      await room.localParticipant.setMicrophoneEnabled(true)
+      console.log('Microphone enabled')
+
+    } catch (err) {
+      console.error('Connection error:', err)
+      setError(err instanceof Error ? err.message : 'Failed to connect')
+      setIsConnecting(false)
     }
   }
 
-  // Handle session end
-  const handleEndSession = async () => {
-    await endSession()
+  const disconnect = async () => {
+    if (roomRef.current) {
+      await roomRef.current.disconnect()
+      cleanup()
+    }
     onEndSession()
   }
 
-  // Handle microphone toggle
-  const handleMicrophoneToggle = async () => {
-    if (!isMicrophoneEnabled) {
-      try {
-        await enableMicrophone()
-        setIsMicrophoneEnabled(true)
-      } catch (error) {
-        console.error('Failed to enable microphone:', error)
-        // Don't update state if it failed
+  const toggleMute = async () => {
+    if (roomRef.current?.localParticipant) {
+      if (isMuted) {
+        await roomRef.current.localParticipant.setMicrophoneEnabled(true)
+      } else {
+        await roomRef.current.localParticipant.setMicrophoneEnabled(false)
       }
-    } else {
-      try {
-        await disableMicrophone()
-        setIsMicrophoneEnabled(false)
-      } catch (error) {
-        console.error('Failed to disable microphone:', error)
-      }
+      setIsMuted(!isMuted)
     }
   }
 
-  // Handle text message send
-  const handleSendMessage = useCallback((message: string) => {
-    if (message.trim()) {
-      sendTextMessage(message)
-      setInputMessage('')
+  const cleanup = () => {
+    if (roomRef.current) {
+      roomRef.current.removeAllListeners()
+      roomRef.current = null
     }
-  }, [sendTextMessage])
+    setIsConnected(false)
+    setIsConnecting(false)
+    setHasAgent(false)
+  }
 
-  // Handle visual content requests
-  const handleVisualContentRequest = (type: 'diagram' | 'flashcard' | 'quiz' | 'mindmap') => {
-    const topics = {
-      diagram: 'photosynthesis',
-      flashcard: 'math formulas',
-      quiz: 'biology concepts',
-      mindmap: 'chemistry topics'
+  useEffect(() => {
+    return () => {
+      cleanup()
     }
-    
-    requestVisualContent(`Create a ${type}`, topics[type])
-  }
-
-  // Handle visual content close
-  const handleVisualContentClose = () => {
-    setShowVisualContent(false)
-    setCurrentVisualContent(null)
-  }
-
-  // Show error if connection failed
-  if (status.error) {
-    return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-        <div className="text-center max-w-md mx-auto p-6">
-          <div className="bg-red-50 border border-red-200 rounded-lg p-6">
-            <h3 className="text-lg font-semibold text-red-800 mb-2">Connection Error</h3>
-            <p className="text-red-700 mb-4">{status.error}</p>
-            <Button 
-              onClick={() => window.location.reload()}
-              className="bg-red-600 hover:bg-red-700"
-            >
-              Refresh Page
-            </Button>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  }, [])
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
-      <div className="container mx-auto p-4">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
-          {/* Main Voice Interface */}
-          <div className="lg:col-span-2">
-            <Card className="h-full">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center gap-2">
-                    <Mic className="h-5 w-5 text-blue-600" />
-                    Clara Voice Assistant
-                  </CardTitle>
-                  <div className="flex items-center gap-2">
-                    <Badge variant={status.isConnected ? "default" : "secondary"}>
-                      {status.isConnected ? "Connected" : "Connecting..."}
-                    </Badge>
-                    {status.agentConnected && (
-                      <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                        Clara Ready
-                      </Badge>
-                    )}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleEndSession}
-                    >
-                      End Session
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-              
-              <CardContent className="space-y-4">
-                {/* Connection Status */}
-                {!status.isConnected && (
-                  <div className="text-center p-6 bg-blue-50 rounded-lg border border-blue-200">
-                    <p className="text-blue-700 mb-4">Ready to start your study session with Clara?</p>
-                    <Button onClick={handleStartSession} className="bg-blue-600 hover:bg-blue-700">
-                      Start Session
-                    </Button>
-                  </div>
-                )}
+    <div className="flex flex-col items-center justify-center min-h-screen p-8 bg-gray-100">
+      <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full">
+        <h1 className="text-2xl font-bold text-center mb-6">Voice Agent Test</h1>
+        
+        {error && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+            {error}
+          </div>
+        )}
 
-                {/* Voice Controls */}
-                {status.isConnected && (
-                  <div className="flex items-center justify-center gap-4 p-6 bg-gray-50 rounded-lg">
-                    <div className="text-center">
-                      <Button 
-                        size="lg" 
-                        className={`rounded-full w-16 h-16 ${
-                          isMicrophoneEnabled ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-400 hover:bg-gray-500'
-                        }`}
-                        onClick={handleMicrophoneToggle}
-                      >
-                        <Mic className="h-6 w-6" />
-                      </Button>
-                      <p className="text-sm mt-2 text-gray-600">
-                        {isMicrophoneEnabled ? 'Microphone On' : 'Microphone Off'}
-                      </p>
-                      {status.isSpeaking && isMicrophoneEnabled && (
-                        <div className="flex items-center justify-center mt-1">
-                          <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-                          <span className="text-xs text-red-600 ml-1">Speaking</span>
-                        </div>
-                      )}
-                    </div>
-                    <Button size="lg" variant="outline" className="rounded-full w-16 h-16">
-                      <Volume2 className="h-6 w-6" />
-                    </Button>
-                  </div>
-                )}
-
-                {/* Microphone Permission Notice */}
-                {status.isConnected && !isMicrophoneEnabled && (
-                  <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                    <p className="text-yellow-800 text-sm">
-                      💡 <strong>Tip:</strong> Enable your microphone to talk to Clara. Click the microphone button above to start.
-                    </p>
-                  </div>
-                )}
-                
-                {/* Messages */}
-                <div className="h-64 overflow-y-auto border rounded-lg p-4 bg-white">
-                  {messages.length === 0 ? (
-                    <div className="text-center text-gray-500 py-8">
-                      {status.isConnected ? "Start talking to Clara or send a message below" : "Connect to start your session"}
-                    </div>
-                  ) : (
-                    messages.map((message, index) => (
-                      <div key={index} className="mb-2 p-2 rounded bg-gray-50">
-                        {message}
-                      </div>
-                    ))
-                  )}
+        <div className="space-y-4">
+          {!isConnected ? (
+            <button
+              onClick={connectToRoom}
+              disabled={isConnecting}
+              className="w-full py-3 px-4 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isConnecting ? 'Connecting...' : 'Start Voice Chat'}
+            </button>
+          ) : (
+            <div className="space-y-4">
+              <div className="text-center">
+                <div className="flex items-center justify-center space-x-2 mb-2">
+                  <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                  <span className="text-green-600 font-medium">Connected</span>
                 </div>
                 
-                {/* Message Input */}
-                {status.isConnected && (
-                  <div className="flex gap-2">
-                    <Input
-                      value={inputMessage}
-                      onChange={(e) => setInputMessage(e.target.value)}
-                      placeholder="Type a message to Clara..."
-                      onKeyPress={(e) => {
-                        if (e.key === 'Enter') {
-                          handleSendMessage(inputMessage)
-                        }
-                      }}
-                    />
-                    <Button onClick={() => handleSendMessage(inputMessage)}>
-                      Send
-                    </Button>
-                  </div>
+                {hasAgent ? (
+                  <p className="text-green-600 text-sm">🤖 Agent is ready to chat!</p>
+                ) : (
+                  <p className="text-orange-600 text-sm">⏳ Waiting for agent to join...</p>
                 )}
+              </div>
 
-                {/* Visual Content Quick Actions */}
-                {status.isConnected && (
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => handleVisualContentRequest('diagram')}
-                      className="flex items-center gap-2"
-                    >
-                      <BarChart3 className="h-4 w-4" />
-                      Create Diagram
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => handleVisualContentRequest('flashcard')}
-                      className="flex items-center gap-2"
-                    >
-                      <FileText className="h-4 w-4" />
-                      Create Flashcards
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => handleVisualContentRequest('quiz')}
-                      className="flex items-center gap-2"
-                    >
-                      <Brain className="h-4 w-4" />
-                      Create Quiz
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => handleVisualContentRequest('mindmap')}
-                      className="flex items-center gap-2"
-                    >
-                      <BarChart3 className="h-4 w-4" />
-                      Create Mindmap
-                    </Button>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-          
-          {/* Sidebar */}
-          <div className="space-y-4">
-            {/* Session Info */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <MessageSquare className="h-4 w-4" />
-                  Session Info
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                <div className="text-sm">
-                  <p><strong>Room:</strong> {status.roomName || 'Not connected'}</p>
-                  <p><strong>Status:</strong> {status.isConnected ? 'Connected' : 'Disconnected'}</p>
-                  <p><strong>Agent:</strong> {status.agentConnected ? 'Clara Ready' : 'Waiting...'}</p>
-                </div>
-              </CardContent>
-            </Card>
+              <div className="flex space-x-2">
+                <button
+                  onClick={toggleMute}
+                  className={`flex-1 py-2 px-4 rounded-lg ${
+                    isMuted 
+                      ? 'bg-red-500 hover:bg-red-600 text-white' 
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-800'
+                  }`}
+                >
+                  {isMuted ? '🔇 Unmute' : '🎤 Mute'}
+                </button>
+                
+                <button
+                  onClick={disconnect}
+                  className="flex-1 py-2 px-4 bg-red-500 text-white rounded-lg hover:bg-red-600"
+                >
+                  End Chat
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
 
-            {/* Participants */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Users className="h-4 w-4" />
-                  Participants
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 p-2 rounded bg-blue-50">
-                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                    <span className="text-sm">You</span>
-                  </div>
-                  <div className="flex items-center gap-2 p-2 rounded bg-purple-50">
-                    <div className={`w-2 h-2 rounded-full ${status.agentConnected ? 'bg-purple-500' : 'bg-gray-300'}`}></div>
-                    <span className="text-sm">Clara AI</span>
-                    {status.agentConnected && <Badge variant="outline">Ready</Badge>}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            
-            {/* Visual Content */}
-            {showVisualContent && currentVisualContent && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <MessageSquare className="h-4 w-4" />
-                    {currentVisualContent.title}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-gray-600 mb-2">
-                    {currentVisualContent.description}
-                  </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleVisualContentClose}
-                  >
-                    Close
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
-          </div>
+        {/* Hidden audio element for agent voice */}
+        <audio ref={audioRef} autoPlay playsInline />
+        
+        <div className="mt-6 text-xs text-gray-500 text-center">
+          <p>Make sure to allow microphone permissions when prompted</p>
         </div>
       </div>
     </div>
   )
 }
-
-export default function ModalVoiceRoom(props: ModalVoiceRoomProps) {
-  return <ModalVoiceRoomContent {...props} />
-} 

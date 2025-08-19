@@ -50,7 +50,7 @@ export function useClaraVoiceSession(config: ClaraVoiceSessionConfig) {
   const speakingCheckRef = useRef<NodeJS.Timeout | null>(null)
 
   // Get LiveKit token from backend
-  const getLiveKitToken = useCallback(async (roomName: string, userId: string): Promise<{ token: string; wsUrl: string } | null> => {
+  const getLiveKitToken = useCallback(async (roomName: string, userId: string): Promise<{ token: string } | null> => {
     try {
       const response = await fetch('/api/livekit/token', {
         method: 'POST',
@@ -64,7 +64,7 @@ export function useClaraVoiceSession(config: ClaraVoiceSessionConfig) {
       
       if (response.ok) {
         const data = await response.json()
-        return { token: data.token, wsUrl: data.wsUrl }
+        return { token: data.token }
       }
       
       return null
@@ -88,7 +88,7 @@ export function useClaraVoiceSession(config: ClaraVoiceSessionConfig) {
         throw new Error('Failed to get LiveKit token')
       }
       
-      const { token, wsUrl } = tokenData
+      const { token } = tokenData
       
       // 3. Create and configure room
       const room = new Room({
@@ -159,7 +159,10 @@ export function useClaraVoiceSession(config: ClaraVoiceSessionConfig) {
       })
       
       // 5. Connect to room
-      await room.connect(wsUrl, token)
+      if (!config.wsUrl) {
+        throw new Error('LiveKit wsUrl is not configured')
+      }
+      await room.connect(config.wsUrl, token)
       
       console.log('Connected to Clara study session:', roomName)
       roomRef.current = room
@@ -449,4 +452,4 @@ export function useClaraVoiceSession(config: ClaraVoiceSessionConfig) {
     setShowVisualContent,
     setCurrentVisualContent
   }
-} 
+}
