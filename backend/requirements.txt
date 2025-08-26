@@ -1,0 +1,14 @@
+# Core FastAPI Dependencies
+fastapi
+uvicorn[standard]
+python-multipart
+python-dotenv
+groq
+
+# WebSocket support
+websockets
+
+# Basic utilities
+asyncio
+redis
+
