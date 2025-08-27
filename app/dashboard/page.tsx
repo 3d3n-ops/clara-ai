@@ -15,9 +15,6 @@ export default function DashboardPage() {
   const router = useRouter()
   const [currentSubject, setCurrentSubject] = useState(0)
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
-  const [uploadError, setUploadError] = useState<string | null>(null)
-
-  const [processing, setProcessing] = useState(false)
 
   const subjects = [
     "Calculus II",
@@ -28,9 +25,6 @@ export default function DashboardPage() {
     "Linear Algebra",
     "Statistics",
     "Computer Science",
-    "Calculus I",
-    "Philosophy",
-    "Distributed Systems",
   ]
 
   useEffect(() => {
@@ -44,61 +38,25 @@ export default function DashboardPage() {
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
     if (files) {
-      const file = files[0]
-      // Validate file type
-      const allowedTypes = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain"]
-      if (!allowedTypes.includes(file.type)) {
-        setUploadError("Invalid file type. Please upload a PDF, DOCX, or TXT file.")
-        return
-      }
-
-      // Validate file size (e.g., 10MB limit)
-      const maxSizeInBytes = 10 * 1024 * 1024
-      if (file.size > maxSizeInBytes) {
-        setUploadError("File size exceeds 10MB. Please upload a smaller file.")
-        return
-      }
-
-      setUploadError(null)
       setUploadedFiles(Array.from(files))
     }
   }
 
-  const startTutorSession = async () => {
-    if (uploadedFiles.length === 0 || uploadError) {
-      // Show a toast or message to the user to upload a valid file
-      return
+  const startTutorSession = () => {
+    // Store uploaded files in localStorage for the session
+    if (uploadedFiles.length > 0) {
+      localStorage.setItem(
+        "sessionFiles",
+        JSON.stringify(
+          uploadedFiles.map((f) => ({
+            name: f.name,
+            size: f.size,
+            type: f.type,
+          })),
+        ),
+      )
     }
-
-    setProcessing(true)
-
-    const file = uploadedFiles[0]
-    const formData = new FormData()
-    formData.append("file", file)
-    formData.append("user_id", user?.id || "")
-
-    try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_LOCAL_API_URL}/api/process-lecture`, {
-        method: "POST",
-        body: formData,
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        // Store the generated content in localStorage to pass to the next page
-        localStorage.setItem("generatedContent", JSON.stringify(data))
-        router.push("/tutor-session")
-      } else {
-        // TODO: Handle error with a toast message
-        console.error("Failed to process lecture material")
-        setUploadError("Failed to process lecture material. Please try again.")
-      }
-    } catch (error) {
-      console.error("Error processing lecture material:", error)
-      setUploadError("An error occurred. Please try again.")
-    } finally {
-      setProcessing(false)
-    }
+    router.push("/tutor-session")
   }
 
   return (
@@ -152,6 +110,7 @@ export default function DashboardPage() {
             <span key={currentSubject} className="text-blue-600 inline-block animate-fade-in">
               {subjects[currentSubject]}
             </span>{" "}
+            today
           </h1>
 
           {/* File Upload Section */}
@@ -167,7 +126,6 @@ export default function DashboardPage() {
                       </div>
                     ))}
                   </div>
-                  {uploadError && <p className="text-red-500 text-sm mt-2">{uploadError}</p>}
                 </CardContent>
               </Card>
             </div>
@@ -179,9 +137,8 @@ export default function DashboardPage() {
               <Button
                 onClick={startTutorSession}
                 className="bg-black hover:bg-gray-800 text-white px-8 py-3 text-lg font-medium rounded-full"
-                disabled={processing}
               >
-                {processing ? "Processing..." : "Tutor me!"}
+                Tutor me!
               </Button>
               <Link href="/chat/homework">
                 <Button
@@ -209,10 +166,10 @@ export default function DashboardPage() {
                   className="cursor-pointer bg-white border-dashed border-2 border-gray-300 hover:border-blue-400 px-6 py-3"
                   asChild
                 >
-                  <span>
+                  <div className="flex items-center gap-2">
                     <Upload className="w-5 h-5" />
                     Upload your lectures
-                  </span>
+                  </div>
                 </Button>
               </label>
               <p className="text-sm text-gray-500 mt-2">PDF, DOC, TXT, Images, PowerPoint supported</p>
