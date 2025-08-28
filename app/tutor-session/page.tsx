@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Home, Settings, Send, GripVertical } from "lucide-react"
 import Link from "next/link"
+
+import { Track } from "livekit-client"
 import {
   LiveKitRoom,
   AudioTrack,
@@ -16,9 +18,15 @@ import {
   useLocalParticipant,
   useTracks,
 } from "@livekit/components-react"
-import { Track } from "livekit-client"
+import { useDataChannel } from "@livekit/components-react"
 import "@livekit/components-styles"
 import { useUser } from "@clerk/nextjs"
+
+import ReactMarkdown from 'react-markdown'
+
+import { ChatHistory } from "@/components/chat-history"
+
+import { CHAT_STRINGS } from "@/lib/constants"
 
 function TutorSessionContent() {
   const [message, setMessage] = useState("")
@@ -28,6 +36,12 @@ function TutorSessionContent() {
   const [chatPaneWidth, setChatPaneWidth] = useState(33.33)
   const [isDraggingSidebar, setIsDraggingSidebar] = useState(false)
   const [isDraggingChat, setIsDraggingChat] = useState(false)
+  const [sessionContent, setSessionContent] = useState<{
+    title: string;
+    notes: string;
+    diagram: string;
+  } | null>(null)
+  const [contentError, setContentError] = useState<string | null>(null)
 
   const sidebarRef = useRef<HTMLDivElement>(null)
   const chatPaneRef = useRef<HTMLDivElement>(null)
@@ -40,9 +54,44 @@ function TutorSessionContent() {
   useEffect(() => {
     const files = localStorage.getItem("sessionFiles")
     if (files) {
-      setSessionFiles(JSON.parse(files))
+      const parsedFiles = JSON.parse(files)
+      setSessionFiles(parsedFiles)
+
+      // If there are files, try to fetch their content
+      const fetchSessionContent = async () => {
+        try {
+          // Assume the last uploaded file's cache key is stored in localStorage
+          const lastUploadCacheKey = localStorage.getItem("sessionCacheKey")
+          
+          if (lastUploadCacheKey) {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_LOCAL_API_URL}/summary/${lastUploadCacheKey}`)
+            const data = await response.json()
+            
+            if (response.ok) {
+              setSessionContent({
+                title: data.title,
+                notes: data.notes,
+                diagram: data.diagram
+              })
+              // Optional: Clear the cache key after successful fetch
+              localStorage.removeItem("sessionCacheKey")
+            } else {
+              setContentError(data.error || "Failed to retrieve session content")
+            }
+          }
+        } catch (error) {
+          console.error("Error fetching session content:", error)
+          setContentError("An unexpected error occurred while fetching content")
+        }
+      }
+
+      fetchSessionContent()
     }
     setTimeout(() => setIsLoaded(true), 100)
+
+    return () => {
+      localStorage.removeItem("sessionFiles")
+    }
   }, [])
 
   useEffect(() => {
@@ -74,13 +123,28 @@ function TutorSessionContent() {
     }
   }, [isDraggingSidebar, isDraggingChat, sidebarWidth])
 
+  const [chatMessages, setChatMessages] = useState<{ sender: string, message: string }[]>([])
+
+  const { send } = useDataChannel("chat", { onMessage: (data) => {
+    const message = new TextDecoder().decode(data)
+    const chatMessage = JSON.parse(message)
+    setChatMessages((prev) => [...prev, chatMessage])
+  }})
+
   const sendMessage = () => {
-    if (message.trim()) {
+    if (message.trim() && send) {
+      const chatMessage = { 
+        sender: 'user', 
+        message: message 
+      }
+      const encodedMessage = new TextEncoder().encode(JSON.stringify(chatMessage))
+      send(encodedMessage)
+      setChatMessages((prev) => [...prev, chatMessage])
       setMessage("")
     }
   }
 
-  const isConnected = connectionState === ConnectionState.Connected
+  const isConnected = connectionState === "connected"
   const isMicEnabled = localParticipant?.isMicrophoneEnabled ?? false
 
   return (
@@ -156,33 +220,35 @@ function TutorSessionContent() {
             {/* Connection Status */}
             <div className="text-center mb-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                {isConnected ? "Connected to Clara" : "Connecting..."}
+                {isConnected ? CHAT_STRINGS.connected : CHAT_STRINGS.connecting}
               </h3>
               <p className="text-sm text-gray-600">
-                {isConnected ? "Voice AI session ready" : "Establishing connection..."}
+                {isConnected ? CHAT_STRINGS.voiceAiSessionReady : CHAT_STRINGS.establishingConnection}
               </p>
             </div>
 
             {/* LiveKit Controls */}
             <div className="flex gap-3 mb-6">
               <TrackToggle
-                source={Track.Source.Microphone}
+                source={Track.Source.Microphone}  // Use Track.Source
                 className={`w-14 h-14 rounded-full transition-all duration-300 flex items-center justify-center ${
                   isMicEnabled ? "bg-blue-600 hover:bg-blue-700 text-white" : "bg-red-500 hover:bg-red-600 text-white"
                 }`}
               ></TrackToggle>
 
               <TrackToggle
-                source={Track.Source.ScreenShare}
+                source={Track.Source.ScreenShare}  // Use Track.Source
                 className="w-14 h-14 rounded-full bg-gray-600 hover:bg-gray-700 text-white flex items-center justify-center"
               ></TrackToggle>
             </div>
 
-            {/* Chat Input */}
+            <ChatHistory messages={chatMessages} />
+
+          {/* Chat Input */}
             <div className="w-full max-w-sm mb-6">
               <div className="flex gap-2">
                 <Input
-                  placeholder="Type to Clara..."
+                  placeholder={CHAT_STRINGS.typeToClara}
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                   onKeyPress={(e) => e.key === "Enter" && sendMessage()}
@@ -198,7 +264,7 @@ function TutorSessionContent() {
           {/* Session Files */}
           {sessionFiles.length > 0 && (
             <div className="flex-shrink-0 w-full max-w-sm mx-auto">
-              <h4 className="text-sm font-medium text-gray-700 mb-2">Session Materials:</h4>
+              <h4 className="text-sm font-medium text-gray-700 mb-2">{CHAT_STRINGS.sessionMaterials}</h4>
               <div className="space-y-1 max-h-32 overflow-y-auto">
                 {sessionFiles.map((file, index) => (
                   <div key={index} className="text-xs text-gray-600 bg-gray-50 p-2 rounded">
@@ -229,8 +295,8 @@ function TutorSessionContent() {
           <div className="flex-shrink-0 p-6 bg-white border-b border-gray-200">
             <Card>
               <CardHeader className="pb-4">
-                <CardTitle className="text-2xl text-gray-900">AI Lesson Content</CardTitle>
-                <p className="text-gray-600">Interactive lessons and diagrams will appear here</p>
+                <CardTitle className="text-2xl text-gray-900">{sessionContent ? sessionContent.title : CHAT_STRINGS.aiLessonContent}</CardTitle>
+                <p className="text-gray-600">{sessionContent ? CHAT_STRINGS.interactiveLesson : 'Interactive lessons and diagrams will appear here'}</p>
               </CardHeader>
             </Card>
           </div>
@@ -238,53 +304,94 @@ function TutorSessionContent() {
           {/* Scrollable Content Area */}
           <div className="flex-1 overflow-y-auto p-6 bg-gray-50">
             <div className="max-w-4xl mx-auto">
-              <Card className="mb-6">
-                <CardContent className="p-8">
-                  <div className="text-center text-gray-500">
-                    <div className="w-16 h-16 bg-gray-200 rounded-full mx-auto mb-4 flex items-center justify-center">
-                      <span className="text-2xl">📚</span>
+              {contentError ? (
+                <Card className="mb-6">
+                  <CardContent className="p-8 text-center">
+                    <div className="text-red-500">
+                      <div className="w-16 h-16 bg-red-100 rounded-full mx-auto mb-4 flex items-center justify-center">
+                        <span className="text-2xl">⚠️</span>
+                      </div>
+                      <h3 className="text-lg font-medium text-red-700 mb-2">{CHAT_STRINGS.contentRetrievalError}</h3>
+                      <p className="text-sm text-red-600 mb-4">{contentError}</p>
+                      <Button 
+                        onClick={() => window.location.reload()} 
+                        className="bg-blue-600 hover:bg-blue-700 text-white"
+                      >
+                        {CHAT_STRINGS.tryAgain}
+                      </Button>
                     </div>
-                    <h3 className="text-lg font-medium text-gray-700 mb-2">Lesson Content Loading...</h3>
-                    <p className="text-sm">
-                      Upload your materials and start a conversation to generate personalized lesson content, diagrams,
-                      and practice problems.
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              ) : sessionContent ? (
+                <>
+                  <Card className="mb-6">
+                    <CardHeader className="pb-4">
+                      <CardTitle className="text-2xl text-gray-900">{sessionContent.title || 'AI Lesson Content'}</CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-8">
+                      <div className="prose max-w-none">
+                        <ReactMarkdown>{sessionContent.notes}</ReactMarkdown>
+                      </div>
+                    </CardContent>
+                  </Card>
 
-              <Card className="mb-6">
-                <CardHeader>
-                  <CardTitle className="text-lg text-gray-800">Interactive Diagrams</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="bg-gray-100 h-64 rounded-lg flex items-center justify-center">
-                    <p className="text-gray-500">Mathematical visualizations will appear here</p>
-                  </div>
-                </CardContent>
-              </Card>
+                  <Card className="mb-6">
+                    <CardHeader>
+                      <CardTitle className="text-lg text-gray-800">{CHAT_STRINGS.interactiveDiagrams}</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="bg-gray-100 rounded-lg p-4">
+                        {sessionContent.diagram ? (
+                          <div className="prose max-w-none">
+                          <ReactMarkdown>{sessionContent.diagram}</ReactMarkdown>
+                        </div>
+                        ) : (
+                          <p className="text-gray-500">{CHAT_STRINGS.noDiagramAvailable}</p>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </>
+              ) : (
+                <>
+                  <Card className="mb-6">
+                    <CardContent className="p-8">
+                      <div className="text-center text-gray-500">
+                        <div className="w-16 h-16 bg-gray-200 rounded-full mx-auto mb-4 flex items-center justify-center">
+                          <span className="text-2xl">📚</span>
+                        </div>
+                        <h3 className="text-lg font-medium text-gray-700 mb-2">{CHAT_STRINGS.lessonContentLoading}</h3>
+                        <p className="text-sm">
+                          {CHAT_STRINGS.generatingPersonalizedContent}
+                        </p>
+                      </div>
+                    </CardContent>
+                  </Card>
 
-              <Card className="mb-6">
-                <CardHeader>
-                  <CardTitle className="text-lg text-gray-800">Practice Problems</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="bg-gray-100 h-48 rounded-lg flex items-center justify-center">
-                    <p className="text-gray-500">AI-generated practice problems will appear here</p>
-                  </div>
-                </CardContent>
-              </Card>
+                  {/* Keep existing placeholder cards */}
+                  <Card className="mb-6">
+                    <CardHeader>
+                      <CardTitle className="text-lg text-gray-800">{CHAT_STRINGS.practiceProblems}</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="bg-gray-100 h-48 rounded-lg flex items-center justify-center">
+                        <p className="text-gray-500">AI-generated practice problems will appear here</p>
+                      </div>
+                    </CardContent>
+                  </Card>
 
-              <Card className="mb-6">
-                <CardHeader>
-                  <CardTitle className="text-lg text-gray-800">Step-by-Step Solutions</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="bg-gray-100 h-56 rounded-lg flex items-center justify-center">
-                    <p className="text-gray-500">Detailed solution walkthroughs will appear here</p>
-                  </div>
-                </CardContent>
-              </Card>
+                  <Card className="mb-6">
+                    <CardHeader>
+                      <CardTitle className="text-lg text-gray-800">{CHAT_STRINGS.stepByStepSolutions}</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="bg-gray-100 h-56 rounded-lg flex items-center justify-center">
+                        <p className="text-gray-500">Detailed solution walkthroughs will appear here</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -345,8 +452,8 @@ export default function TutorSessionPage() {
       <div className="h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <div className="w-16 h-16 bg-blue-600 rounded-full mx-auto mb-4 animate-pulse"></div>
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">Connecting to Clara...</h2>
-          <p className="text-gray-600">Setting up your tutoring session</p>
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">{CHAT_STRINGS.connectingToClara}</h2>
+          <p className="text-gray-600">{CHAT_STRINGS.settingUpTutoringSession}</p>
         </div>
       </div>
     )
@@ -359,7 +466,7 @@ export default function TutorSessionPage() {
           <div className="w-16 h-16 bg-red-500 rounded-full mx-auto mb-4 flex items-center justify-center">
             <span className="text-white text-2xl">⚠️</span>
           </div>
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">Connection Error</h2>
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">{CHAT_STRINGS.connectionError}</h2>
           <p className="text-gray-600 mb-4">{error}</p>
           <Button onClick={() => window.location.reload()} className="bg-blue-600 hover:bg-blue-700">
             Try Again
@@ -373,8 +480,8 @@ export default function TutorSessionPage() {
     return (
       <div className="h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">Unable to connect</h2>
-          <p className="text-gray-600">Please try refreshing the page</p>
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">{CHAT_STRINGS.unableToConnect}</h2>
+          <p className="text-gray-600">{CHAT_STRINGS.pleaseRefresh}</p>
         </div>
       </div>
     )

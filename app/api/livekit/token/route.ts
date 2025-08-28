@@ -45,41 +45,7 @@ export async function POST(request: NextRequest) {
     // Generate token
     const token = await at.toJwt()
 
-    try {
-      const modalWebhookUrl = process.env.MODAL_WEBHOOK_URL
-      if (modalWebhookUrl) {
-        console.log(`Triggering Modal webhook for room: ${roomName}`)
-        console.log(`Modal webhook URL: ${modalWebhookUrl}`)
-
-        const webhookResponse = await fetch(modalWebhookUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            event: 'room_started',
-            id: `manual-${Date.now()}`,
-            createdAt: Math.floor(Date.now() / 1000),
-            room: {
-              sid: roomName,
-              name: roomName
-            }
-          })
-        })
-        
-        if (webhookResponse.ok) {
-          console.log('Successfully triggered Modal agent')
-        } else {
-          const errorText = await webhookResponse.text()
-          console.error(`Failed to trigger Modal agent (${webhookResponse.status}):`, errorText)
-        }
-      } else {
-        console.warn('MODAL_WEBHOOK_URL not configured - agent will not be triggered')
-      }
-    } catch (webhookError) {
-      console.error('Error triggering Modal webhook:', webhookError)
-      // Don't fail the token request if webhook fails
-    }
+    
 
     // Return both token and wsUrl for frontend connection
     return NextResponse.json({ 

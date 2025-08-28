@@ -145,15 +145,12 @@ export async function POST(request: NextRequest) {
     
     const pythonBackendUrl = process.env.NEXT_PUBLIC_API_URL || process.env.PYTHON_BACKEND_URL || 'http://localhost:8000'
     
-    console.log(`[Upload API] Uploading file ${file.name} for user ${userId} to folder ${folderId || 'none'}`)
+    console.log(`[Upload API] Uploading file ${file.name} for user ${userId}`)
     console.log(`[Upload API] Backend URL: ${pythonBackendUrl}`)
     
-    const response = await fetch(`${pythonBackendUrl}/homework/upload-rag`, {
+    const response = await fetch(`${pythonBackendUrl}/file-upload/`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
+      body: formData,
     })
 
     if (!response.ok) {
@@ -182,11 +179,17 @@ export async function POST(request: NextRequest) {
     console.log(`[Upload API] Successfully uploaded: ${file.name}`)
     console.log(`[Upload API] Response data:`, data)
     
+    // Add client-side cache key storage logic
+    if (data.cache_key) {
+      console.log(`[Upload API] Storing cache key: ${data.cache_key}`)
+    }
+
     return NextResponse.json({
       success: true,
       file_id: data.file_id,
       filename: file.name,
       chunks_processed: data.chunks_processed,
+      cache_key: data.cache_key || null,
       message: 'File uploaded and processed successfully'
     })
   } catch (error) {
