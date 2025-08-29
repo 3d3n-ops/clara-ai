@@ -78,7 +78,7 @@ export default function DashboardPage() {
     formData.append("user_id", user?.id || "")
 
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_LOCAL_API_URL}/api/process-lecture`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}api/process-lecture`, {
         method: "POST",
         body: formData,
       })
