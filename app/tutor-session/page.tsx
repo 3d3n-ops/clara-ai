@@ -18,24 +18,76 @@ import {
   useRemoteParticipants,
   StartAudio,
 } from "@livekit/components-react" 
-import { Track, ConnectionState, RemoteTrack, RemoteAudioTrack, Room, RoomEvent, Track as LiveKitTrack } from "livekit-client"
+import { Track, ConnectionState, Room } from "livekit-client"
 import "@livekit/components-styles"
 import { useUser } from "@clerk/nextjs"
 import ReactMarkdown from "react-markdown"
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { prism } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import mermaid from "mermaid"
+import { useDataReceived } from "@/hooks/use-data-received"
+import { Mermaid } from "mermaid"
+import { highlightCode } from "@/lib/shiki-highlighter"
 
-import { useDataReceived } from "@/hooks/use-data-received";
+// Dynamic import for mermaid to avoid SSR issues
+import dynamic from 'next/dynamic'
 
+// Dynamically import mermaid with no SSR
+const MermaidChart = dynamic(() => import('@/components/MermaidChart'), {
+  ssr: false,
+  loading: () => <div>Loading diagram...</div>
+})
 
 declare global {
   interface Window {
     lkRoom?: any;
+    cleanupRoomListeners?: () => void;
   }
 }
 
-function TutorSessionContent({ room }: { room: Room | undefined }) {
+interface CodeBlockProps {
+  node?: any;
+  className?: string;
+  children?: React.ReactNode; // Make children optional
+  inline?: boolean; // Add inline prop
+}
+
+function CodeBlock({ className, children, inline, ...props }: CodeBlockProps) {
+  const match = /language-(\w+)/.exec(className || '');
+  const lang = match ? match[1] : 'plaintext';
+  const code = String(children).replace(/\n$/, '');
+  const [highlightedCode, setHighlightedCode] = useState('');
+
+  useEffect(() => {
+    const getHighlightedCode = async () => {
+      try {
+        const html = await highlightCode(code, lang);
+        setHighlightedCode(html);
+      } catch (error) {
+        console.error('Code highlighting failed:', error);
+        setHighlightedCode(`<pre><code>${code}</code></pre>`);
+      }
+    };
+    if (!inline) {
+      getHighlightedCode();
+    }
+  }, [code, lang, inline]);
+
+  if (inline) {
+    return <code className={className} {...props}>{children}</code>;
+  }
+
+  return match ? (
+    <div dangerouslySetInnerHTML={{ __html: highlightedCode }} />
+  ) : (
+    <code className={className} {...props}>
+      {children}
+    </code>
+  );
+}
+
+interface TutorSessionContentProps {
+  room: Room | undefined;
+}
+
+function TutorSessionContent({ room }: TutorSessionContentProps) {
   const [message, setMessage] = useState("")
   const [sessionFiles, setSessionFiles] = useState<any[]>([])
   const [isLoaded, setIsLoaded] = useState(false)
@@ -46,7 +98,9 @@ function TutorSessionContent({ room }: { room: Room | undefined }) {
   const [agentStatus, setAgentStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
   const [title, setTitle] = useState("")
   const [notes, setNotes] = useState("")
-  const [diagrams, setDiagrams] = useState<any[]>([])
+  const [diagrams, setDiagrams] = useState<{ content: string }[]>([])
+  const [mermaidLoaded, setMermaidLoaded] = useState(false)
+  
   const data = useDataReceived(room);
 
   useEffect(() => {
@@ -59,10 +113,10 @@ function TutorSessionContent({ room }: { room: Room | undefined }) {
           setNotes(data.example);
           break;
         case "quiz":
-          // You might want to handle quiz data differently
+          // Handle quiz data differently if needed
           break;
         case "diagram":
-          setDiagrams([ { content: data.mermaid_code } ]);
+          setDiagrams([{ content: data.mermaid_code }]);
           break;
         default:
           break;
@@ -86,56 +140,63 @@ function TutorSessionContent({ room }: { room: Room | undefined }) {
     (trackRef) => trackRef.participant.isLocal === false
   )
 
+  // Handle localStorage safely
   useEffect(() => {
-    const files = localStorage.getItem("sessionFiles")
-    if (files) {
-      setSessionFiles(JSON.parse(files))
-    }
-    setTimeout(() => setIsLoaded(true), 100)
+    if (typeof window !== 'undefined') {
+      try {
+        const files = localStorage.getItem("sessionFiles")
+        if (files) {
+          setSessionFiles(JSON.parse(files))
+        }
+      } catch (error) {
+        console.error('Error loading session files from localStorage:', error);
+      }
+      
+      setTimeout(() => setIsLoaded(true), 100)
 
-    const generatedContent = localStorage.getItem("generatedContent")
-    if (generatedContent) {
-      const { title, notes, diagrams } = JSON.parse(generatedContent)
-      setTitle(title)
-      setNotes(notes)
-      setDiagrams(diagrams)
-      localStorage.removeItem("generatedContent") // Clean up local storage
+      try {
+        const generatedContent = localStorage.getItem("generatedContent")
+        if (generatedContent) {
+          const { title, notes, diagrams } = JSON.parse(generatedContent)
+          setTitle(title || "")
+          setNotes(notes || "")
+          setDiagrams(diagrams || [])
+          localStorage.removeItem("generatedContent") // Clean up local storage
+        }
+      } catch (error) {
+        console.error('Error loading generated content from localStorage:', error);
+      }
     }
   }, [])
 
+  // Initialize mermaid safely
   useEffect(() => {
-    if (diagrams.length > 0) {
-      // Add a small delay to ensure the DOM is updated
-      setTimeout(() => {
-        try {
-          mermaid.initialize({ startOnLoad: false });
-          mermaid.run({ nodes: document.querySelectorAll(".mermaid") });
-        } catch (e) {
-          console.error("Mermaid rendering error:", e);
-        }
-      }, 100);
+    if (diagrams.length > 0 && typeof window !== 'undefined' && !mermaidLoaded) {
+      setMermaidLoaded(true);
     }
-  }, [diagrams]);
+  }, [diagrams, mermaidLoaded]);
 
   // Monitor for agent joining the room with improved detection and audio debugging
   useEffect(() => {
+    if (!localParticipant) return;
+
     const checkForAgent = () => {
       // Look for participants that are not the local participant
       const otherParticipants = participants.filter(p => 
-        p.identity !== localParticipant?.identity
+        p.identity !== localParticipant.identity
       )
       
       // Log all participants for debugging
       console.log("🔍 All participants:", participants.map(p => ({
         identity: p.identity,
-        name: p.name,
+        name: p.name || 'no name',
         isLocal: p.isLocal,
-        audioTracks: Array.from(p.audioTrackPublications?.values() || []).map(pub => ({
+        audioTracks: Array.from(p.audioTrackPublications?.values() as Iterable<any> || []).map(pub => ({
           trackSid: pub.trackSid,
-          subscribed: pub?.isSubscribed ?? false,
-          enabled: pub?.isEnabled ?? false,
-          muted: pub?.isMuted ?? false,
-          kind: pub?.kind,
+          subscribed: pub.isSubscribed ?? false,
+          enabled: pub.isEnabled ?? false,
+          muted: pub.isMuted ?? false,
+          kind: pub.kind,
           source: pub.source
         }))
       })))
@@ -144,22 +205,22 @@ function TutorSessionContent({ room }: { room: Room | undefined }) {
         const agent = otherParticipants[0] // Assume first non-local participant is the agent
         console.log("🎉 Agent Status: Agent detected!")
         console.log("🤖 Agent Identity:", agent.identity)
-        console.log("📛 Agent Name:", agent.name)
+        console.log("🔖 Agent Name:", agent.name || 'no name')
         
         // Log agent's audio tracks
-        const agentAudioTracks = Array.from(agent.audioTrackPublications?.values() || [])
+        const agentAudioTracks = Array.from(agent.audioTrackPublications?.values() as Iterable<any> || [])
         console.log("🎵 Agent Audio Tracks:", agentAudioTracks.map(pub => ({
           trackSid: pub.trackSid,
-          subscribed: pub?.isSubscribed ?? false,
-          enabled: pub?.isEnabled ?? false,
-          muted: pub?.isMuted ?? false,
-          kind: pub?.kind,
+          subscribed: pub.isSubscribed ?? false,
+          enabled: pub.isEnabled ?? false,
+          muted: pub.isMuted ?? false,
+          kind: pub.kind,
           source: pub.source,
           track: pub.track ? {
             sid: pub.track.sid,
             kind: pub.track.kind,
-            enabled: pub.track.enabled,
-            muted: pub.track.muted
+            enabled: pub.track.mediaStreamTrack?.enabled ?? false,
+            muted: pub.track.mediaStreamTrack?.muted ?? false
           } : null
         })))
         
@@ -194,7 +255,7 @@ function TutorSessionContent({ room }: { room: Room | undefined }) {
       participant: {
         identity: trackRef.participant.identity,
         isLocal: trackRef.participant.isLocal,
-        name: trackRef.participant.name
+        name: trackRef.participant.name || 'no name'
       },
       publication: trackRef.publication ? {
         trackSid: trackRef.publication.trackSid,
@@ -207,8 +268,8 @@ function TutorSessionContent({ room }: { room: Room | undefined }) {
       track: trackRef.publication?.track ? {
         sid: trackRef.publication.track.sid,
         kind: trackRef.publication.track.kind,
-        enabled: trackRef?.publication?.track?.enabled ?? false,
-        muted: trackRef?.publication?.track?.muted ?? false,
+        enabled: trackRef.publication.track.mediaStreamTrack?.enabled ?? false,
+        muted: trackRef.publication.track.mediaStreamTrack?.muted ?? false,
         mediaStreamTrack: trackRef.publication.track.mediaStreamTrack ? {
           enabled: trackRef.publication.track.mediaStreamTrack.enabled,
           muted: trackRef.publication.track.mediaStreamTrack.muted,
@@ -232,33 +293,40 @@ function TutorSessionContent({ room }: { room: Room | undefined }) {
   // Audio device and browser permissions debugging
   useEffect(() => {
     const checkAudioPermissions = async () => {
+      if (typeof window === 'undefined') return;
+      
       try {
         console.log("🎤 Audio Debug - Checking browser audio permissions...")
         
         // Check if we have microphone permission
-        const permissionStatus = await navigator.permissions.query({ name: 'microphone' as PermissionName })
-        console.log("🎤 Microphone Permission:", permissionStatus.state)
+        if ('permissions' in navigator && 'query' in navigator.permissions) {
+          const permissionStatus = await navigator.permissions.query({ name: 'microphone' as PermissionName })
+          console.log("🎤 Microphone Permission:", permissionStatus.state)
+        }
         
         // Get available audio devices
-        const devices = await navigator.mediaDevices.enumerateDevices()
-        const audioInputs = devices.filter(device => device.kind === 'audioinput')
-        const audioOutputs = devices.filter(device => device.kind === 'audiooutput')
-        
-        console.log("🎧 Audio Input Devices:", audioInputs.map(device => ({
-          deviceId: device.deviceId,
-          label: device.label,
-          groupId: device.groupId
-        })))
-        
-        console.log("🔊 Audio Output Devices:", audioOutputs.map(device => ({
-          deviceId: device.deviceId,
-          label: device.label,
-          groupId: device.groupId
-        })))
+        if ('mediaDevices' in navigator && 'enumerateDevices' in navigator.mediaDevices) {
+          const devices = await navigator.mediaDevices.enumerateDevices()
+          const audioInputs = devices.filter(device => device.kind === 'audioinput')
+          const audioOutputs = devices.filter(device => device.kind === 'audiooutput')
+          
+          console.log("🎧 Audio Input Devices:", audioInputs.map(device => ({
+            deviceId: device.deviceId,
+            label: device.label || 'no label',
+            groupId: device.groupId
+          })))
+          
+          console.log("🔊 Audio Output Devices:", audioOutputs.map(device => ({
+            deviceId: device.deviceId,
+            label: device.label || 'no label',
+            groupId: device.groupId
+          })))
+        }
         
         // Check if audio context is running
-        if (typeof window !== 'undefined' && window.AudioContext) {
-          const audioContext = new AudioContext()
+        if ('AudioContext' in window || 'webkitAudioContext' in window) {
+          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+          const audioContext = new AudioContextClass()
           console.log("🎵 AudioContext State:", audioContext.state)
           console.log("🎵 AudioContext Sample Rate:", audioContext.sampleRate)
           audioContext.close()
@@ -438,12 +506,12 @@ function TutorSessionContent({ room }: { room: Room | undefined }) {
                 className={`w-14 h-14 rounded-full transition-all duration-300 flex items-center justify-center ${
                   isMicEnabled ? "bg-blue-600 hover:bg-blue-700 text-white" : "bg-red-500 hover:bg-red-600 text-white"
                 }`}
-              ></TrackToggle>
+              />
 
               <TrackToggle
                 source={Track.Source.ScreenShare}
                 className="w-14 h-14 rounded-full bg-gray-600 hover:bg-gray-700 text-white flex items-center justify-center"
-              ></TrackToggle>
+              />
             </div>
 
             {/* Chat Input */}
@@ -511,23 +579,7 @@ function TutorSessionContent({ room }: { room: Room | undefined }) {
                   <CardContent className="p-8 prose max-w-none">
                     <ReactMarkdown
                       components={{
-                        code({ node, className, children, ...props }) {
-                          const match = /language-(\w+)/.exec(className || '')
-                          return match ? (
-                            <SyntaxHighlighter
-                              style={prism}
-                              language={match[1]}
-                              PreTag="div"
-                              {...props}
-                            >
-                              {String(children).replace(/\n$/, '')}
-                            </SyntaxHighlighter>
-                          ) : (
-                            <code className={className} {...props}>
-                              {children}
-                            </code>
-                          )
-                        }
+                        code: CodeBlock,
                       }}
                     >
                       {notes}
@@ -558,9 +610,7 @@ function TutorSessionContent({ room }: { room: Room | undefined }) {
                   </CardHeader>
                   <CardContent>
                     {diagrams.map((diagram, index) => (
-                      <div key={index} className="mermaid">
-                        {diagram.content}
-                      </div>
+                      <MermaidChart key={index} chart={diagram.content} />
                     ))}
                   </CardContent>
                 </Card>
@@ -569,7 +619,6 @@ function TutorSessionContent({ room }: { room: Room | undefined }) {
           </div>
         </div>
       </div>
-
     </div>
   )
 }
@@ -578,7 +627,7 @@ export default function TutorSessionPage() {
   const { user } = useUser()
   const [connectionData, setConnectionData] = useState<{ token: string; wsUrl: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [room, setRoom] = useState<Room | undefined>(undefined);
+  const [room, setRoom] = useState<Room | undefined>(undefined)
 
   useEffect(() => {
     const connectToLiveKit = async () => {
@@ -639,6 +688,15 @@ export default function TutorSessionPage() {
     connectToLiveKit()
   }, [user])
 
+  // Cleanup function for room listeners
+  useEffect(() => {
+    return () => {
+      if (typeof window !== 'undefined' && window.cleanupRoomListeners) {
+        window.cleanupRoomListeners();
+      }
+    }
+  }, [])
+
   // Show error state if there's an error
   if (error) {
     return (
@@ -667,38 +725,34 @@ export default function TutorSessionPage() {
       serverUrl={connectionData?.wsUrl || ""}
       data-lk-theme="default"
       style={{ height: "100vh" }}
-      onConnected={(roomInstance) => {
-        setRoom(roomInstance);
-        const lkRoom = window.lkRoom;
-        if (!lkRoom) {
-          console.warn("⚠️ Room object is not available");
-          return;
-        }
+      onConnected={() => {
+        // The room instance is available via useRoomContext or useRoom hook inside LiveKitRoom children
+        setRoom(window.lkRoom); // Assuming lkRoom is set in the global window object in the TutorSessionContent component
 
         console.log("🎉 LiveKit Room: Successfully connected to room!");
         console.log("🤖 LiveKit Cloud Agent: Waiting for agent to auto-join...");
         
         // Safe property access with null checks
         const audioContextInfo = {
-          canPlayAudio: roomInstance.canPlaybackAudio,
+          canPlayAudio: window.lkRoom?.canPlaybackAudio,
           audioContext: 'not available'
         };
         console.log("🎵 Room Audio Context:", audioContextInfo);
         
-        // Set up audio track event handlers
+        // Set up audio track event handlers with proper typing
         const handleTrackSubscribed = (track: any, publication: any, participant: any) => {
           try {
             const trackInfo = {
               trackKind: track?.kind,
               trackSid: track?.sid,
               participant: participant?.identity,
-              isAgent: participant?.identity !== roomInstance?.localParticipant?.identity,
+              isAgent: participant?.identity !== window.lkRoom?.localParticipant?.identity,
               isEnabled: track?.isEnabled,
               isMuted: track?.isMuted
             };
             console.log("🎵 Track Subscribed:", trackInfo);
             
-            if (track?.kind === 'audio' && participant?.identity !== roomInstance?.localParticipant?.identity) {
+            if (track?.kind === 'audio' && participant?.identity !== window.lkRoom?.localParticipant?.identity) {
               console.log("🎉 Agent Audio Track Subscribed!");
               console.log("🎵 Audio Track Details:", {
                 trackSid: track.sid,
@@ -727,31 +781,37 @@ export default function TutorSessionPage() {
         };
         
         // Add event listeners
-        roomInstance.on('trackSubscribed', handleTrackSubscribed);
-        roomInstance.on('trackUnsubscribed', handleTrackUnsubscribed);
+        window.lkRoom.on('trackSubscribed', handleTrackSubscribed);
+        window.lkRoom.on('trackUnsubscribed', handleTrackUnsubscribed);
         
         // Cleanup function to remove listeners
         const cleanup = () => {
-          if (roomInstance) {
-            roomInstance.off('trackSubscribed', handleTrackSubscribed);
-            roomInstance.off('trackUnsubscribed', handleTrackUnsubscribed);
+          if (window.lkRoom) {
+            window.lkRoom.off('trackSubscribed', handleTrackSubscribed);
+            window.lkRoom.off('trackUnsubscribed', handleTrackUnsubscribed);
           }
-          delete window.lkRoom;
+          if (typeof window !== 'undefined') {
+            delete window.lkRoom;
+          }
         };
         
         // Store cleanup function
-        (window as any).cleanupRoomListeners = cleanup;
+        window.cleanupRoomListeners = cleanup;
       }}
       onDisconnected={(reason) => {
         console.log("👋 LiveKit Room: Disconnected from room");
         console.log("📝 Disconnect reason:", reason);
-        delete (window as any).lkRoom;
+        if (typeof window !== 'undefined') {
+          delete window.lkRoom;
+        }
       }}
       onError={(error) => {
         console.error("🚨 LiveKit Room: Connection error occurred");
         console.error("🚨 Error details:", error);
         console.error("🚨 Error message:", error.message);
-        delete (window as any).lkRoom;
+        if (typeof window !== 'undefined') {
+          delete window.lkRoom;
+        }
       }}
     >
       <TutorSessionContent room={room} />

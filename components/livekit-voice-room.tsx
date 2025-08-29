@@ -67,7 +67,7 @@ function VoiceAssistantDemo({
           {state === "listening" && "I'm listening to you..."}
           {state === "thinking" && "Let me think about that..."}
           {state === "speaking" && "I'm speaking to you..."}
-          {state === "idle" && "Ready to help with your studies"}
+          
         </p>
       </div>
 
