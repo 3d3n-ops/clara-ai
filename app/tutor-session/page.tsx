@@ -6,29 +6,36 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Home, Settings, Send, GripVertical } from "lucide-react"
 import Link from "next/link"
-
-import { Track } from "livekit-client"
 import {
   LiveKitRoom,
   AudioTrack,
-  ConnectionState,
   RoomAudioRenderer,
   TrackToggle,
   useConnectionState,
   useLocalParticipant,
   useTracks,
-} from "@livekit/components-react"
-import { useDataChannel } from "@livekit/components-react"
+  useParticipants,
+  useRemoteParticipants,
+  StartAudio,
+} from "@livekit/components-react" 
+import { Track, ConnectionState, RemoteTrack, RemoteAudioTrack, Room, RoomEvent, Track as LiveKitTrack } from "livekit-client"
 import "@livekit/components-styles"
 import { useUser } from "@clerk/nextjs"
+import ReactMarkdown from "react-markdown"
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { prism } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import mermaid from "mermaid"
 
-import ReactMarkdown from 'react-markdown'
+import { useDataReceived } from "@/hooks/use-data-received";
 
-import { ChatHistory } from "@/components/chat-history"
 
-import { CHAT_STRINGS } from "@/lib/constants"
+declare global {
+  interface Window {
+    lkRoom?: any;
+  }
+}
 
-function TutorSessionContent() {
+function TutorSessionContent({ room }: { room: Room | undefined }) {
   const [message, setMessage] = useState("")
   const [sessionFiles, setSessionFiles] = useState<any[]>([])
   const [isLoaded, setIsLoaded] = useState(false)
@@ -36,63 +43,236 @@ function TutorSessionContent() {
   const [chatPaneWidth, setChatPaneWidth] = useState(33.33)
   const [isDraggingSidebar, setIsDraggingSidebar] = useState(false)
   const [isDraggingChat, setIsDraggingChat] = useState(false)
-  const [sessionContent, setSessionContent] = useState<{
-    title: string;
-    notes: string;
-    diagram: string;
-  } | null>(null)
-  const [contentError, setContentError] = useState<string | null>(null)
+  const [agentStatus, setAgentStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
+  const [title, setTitle] = useState("")
+  const [notes, setNotes] = useState("")
+  const [diagrams, setDiagrams] = useState<any[]>([])
+  const data = useDataReceived(room);
+
+  useEffect(() => {
+    if (data) {
+      switch (data.tool) {
+        case "explanation":
+          setNotes(data.explanation);
+          break;
+        case "example":
+          setNotes(data.example);
+          break;
+        case "quiz":
+          // You might want to handle quiz data differently
+          break;
+        case "diagram":
+          setDiagrams([ { content: data.mermaid_code } ]);
+          break;
+        default:
+          break;
+      }
+    }
+  }, [data]);
 
   const sidebarRef = useRef<HTMLDivElement>(null)
   const chatPaneRef = useRef<HTMLDivElement>(null)
   const connectionState = useConnectionState()
   const { localParticipant } = useLocalParticipant()
+  const participants = useParticipants()
+  const remoteParticipants = useRemoteParticipants()
 
   // Get audio tracks for visualization
   const tracks = useTracks([{ source: Track.Source.Microphone, withPlaceholder: true }])
+  
+  // Get all audio tracks (both local and remote)
+  const allAudioTracks = useTracks([Track.Source.Microphone], { onlySubscribed: false })
+  const remoteAudioTracks = useTracks([Track.Source.Microphone], { onlySubscribed: false }).filter(
+    (trackRef) => trackRef.participant.isLocal === false
+  )
 
   useEffect(() => {
     const files = localStorage.getItem("sessionFiles")
     if (files) {
-      const parsedFiles = JSON.parse(files)
-      setSessionFiles(parsedFiles)
-
-      // If there are files, try to fetch their content
-      const fetchSessionContent = async () => {
-        try {
-          // Assume the last uploaded file's cache key is stored in localStorage
-          const lastUploadCacheKey = localStorage.getItem("sessionCacheKey")
-          
-          if (lastUploadCacheKey) {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_LOCAL_API_URL}/summary/${lastUploadCacheKey}`)
-            const data = await response.json()
-            
-            if (response.ok) {
-              setSessionContent({
-                title: data.title,
-                notes: data.notes,
-                diagram: data.diagram
-              })
-              // Optional: Clear the cache key after successful fetch
-              localStorage.removeItem("sessionCacheKey")
-            } else {
-              setContentError(data.error || "Failed to retrieve session content")
-            }
-          }
-        } catch (error) {
-          console.error("Error fetching session content:", error)
-          setContentError("An unexpected error occurred while fetching content")
-        }
-      }
-
-      fetchSessionContent()
+      setSessionFiles(JSON.parse(files))
     }
     setTimeout(() => setIsLoaded(true), 100)
 
-    return () => {
-      localStorage.removeItem("sessionFiles")
+    const generatedContent = localStorage.getItem("generatedContent")
+    if (generatedContent) {
+      const { title, notes, diagrams } = JSON.parse(generatedContent)
+      setTitle(title)
+      setNotes(notes)
+      setDiagrams(diagrams)
+      localStorage.removeItem("generatedContent") // Clean up local storage
     }
   }, [])
+
+  useEffect(() => {
+    if (diagrams.length > 0) {
+      // Add a small delay to ensure the DOM is updated
+      setTimeout(() => {
+        try {
+          mermaid.initialize({ startOnLoad: false });
+          mermaid.run({ nodes: document.querySelectorAll(".mermaid") });
+        } catch (e) {
+          console.error("Mermaid rendering error:", e);
+        }
+      }, 100);
+    }
+  }, [diagrams]);
+
+  // Monitor for agent joining the room with improved detection and audio debugging
+  useEffect(() => {
+    const checkForAgent = () => {
+      // Look for participants that are not the local participant
+      const otherParticipants = participants.filter(p => 
+        p.identity !== localParticipant?.identity
+      )
+      
+      // Log all participants for debugging
+      console.log("🔍 All participants:", participants.map(p => ({
+        identity: p.identity,
+        name: p.name,
+        isLocal: p.isLocal,
+        audioTracks: Array.from(p.audioTrackPublications?.values() || []).map(pub => ({
+          trackSid: pub.trackSid,
+          subscribed: pub?.isSubscribed ?? false,
+          enabled: pub?.isEnabled ?? false,
+          muted: pub?.isMuted ?? false,
+          kind: pub?.kind,
+          source: pub.source
+        }))
+      })))
+      
+      if (otherParticipants.length > 0 && agentStatus !== 'connected') {
+        const agent = otherParticipants[0] // Assume first non-local participant is the agent
+        console.log("🎉 Agent Status: Agent detected!")
+        console.log("🤖 Agent Identity:", agent.identity)
+        console.log("📛 Agent Name:", agent.name)
+        
+        // Log agent's audio tracks
+        const agentAudioTracks = Array.from(agent.audioTrackPublications?.values() || [])
+        console.log("🎵 Agent Audio Tracks:", agentAudioTracks.map(pub => ({
+          trackSid: pub.trackSid,
+          subscribed: pub?.isSubscribed ?? false,
+          enabled: pub?.isEnabled ?? false,
+          muted: pub?.isMuted ?? false,
+          kind: pub?.kind,
+          source: pub.source,
+          track: pub.track ? {
+            sid: pub.track.sid,
+            kind: pub.track.kind,
+            enabled: pub.track.enabled,
+            muted: pub.track.muted
+          } : null
+        })))
+        
+        setAgentStatus('connected')
+      } else if (otherParticipants.length === 0 && agentStatus === 'connected') {
+        console.log("👋 Agent Status: Agent has left the room")
+        setAgentStatus('disconnected')
+      }
+    }
+
+    if (connectionState === ConnectionState.Connected) {
+      checkForAgent()
+    }
+  }, [participants, localParticipant, agentStatus, connectionState])
+
+  // Set agent status to connecting when room is connected but no agent yet
+  useEffect(() => {
+    if (connectionState === ConnectionState.Connected) {
+      const timer = setTimeout(() => {
+        if (agentStatus === 'connecting' && participants.length <= 1) {
+          console.log("⏰ Agent connection timeout - still waiting...")
+        }
+      }, 10000) // Check after 10 seconds
+
+      return () => clearTimeout(timer)
+    }
+  }, [connectionState, agentStatus, participants.length])
+
+  // Audio debugging - monitor all audio tracks
+  useEffect(() => {
+    console.log("🎧 Audio Debug - All Audio Tracks:", allAudioTracks.map(trackRef => ({
+      participant: {
+        identity: trackRef.participant.identity,
+        isLocal: trackRef.participant.isLocal,
+        name: trackRef.participant.name
+      },
+      publication: trackRef.publication ? {
+        trackSid: trackRef.publication.trackSid,
+        subscribed: trackRef.publication.isSubscribed,
+        enabled: trackRef.publication.isEnabled,
+        muted: trackRef.publication.isMuted,
+        source: trackRef.publication.source,
+        kind: trackRef.publication.kind
+      } : null,
+      track: trackRef.publication?.track ? {
+        sid: trackRef.publication.track.sid,
+        kind: trackRef.publication.track.kind,
+        enabled: trackRef?.publication?.track?.enabled ?? false,
+        muted: trackRef?.publication?.track?.muted ?? false,
+        mediaStreamTrack: trackRef.publication.track.mediaStreamTrack ? {
+          enabled: trackRef.publication.track.mediaStreamTrack.enabled,
+          muted: trackRef.publication.track.mediaStreamTrack.muted,
+          readyState: trackRef.publication.track.mediaStreamTrack.readyState
+        } : null
+      } : null
+    })))
+    
+    console.log("🎵 Audio Debug - Remote Audio Tracks Only:", remoteAudioTracks.length)
+    remoteAudioTracks.forEach((trackRef, index) => {
+      console.log(`🎵 Remote Audio Track ${index + 1}:`, {
+        participant: trackRef.participant.identity,
+        trackSid: trackRef.publication?.trackSid,
+        subscribed: trackRef.publication?.isSubscribed,
+        enabled: trackRef.publication?.isEnabled,
+        muted: trackRef.publication?.isMuted
+      })
+    })
+  }, [allAudioTracks, remoteAudioTracks])
+
+  // Audio device and browser permissions debugging
+  useEffect(() => {
+    const checkAudioPermissions = async () => {
+      try {
+        console.log("🎤 Audio Debug - Checking browser audio permissions...")
+        
+        // Check if we have microphone permission
+        const permissionStatus = await navigator.permissions.query({ name: 'microphone' as PermissionName })
+        console.log("🎤 Microphone Permission:", permissionStatus.state)
+        
+        // Get available audio devices
+        const devices = await navigator.mediaDevices.enumerateDevices()
+        const audioInputs = devices.filter(device => device.kind === 'audioinput')
+        const audioOutputs = devices.filter(device => device.kind === 'audiooutput')
+        
+        console.log("🎧 Audio Input Devices:", audioInputs.map(device => ({
+          deviceId: device.deviceId,
+          label: device.label,
+          groupId: device.groupId
+        })))
+        
+        console.log("🔊 Audio Output Devices:", audioOutputs.map(device => ({
+          deviceId: device.deviceId,
+          label: device.label,
+          groupId: device.groupId
+        })))
+        
+        // Check if audio context is running
+        if (typeof window !== 'undefined' && window.AudioContext) {
+          const audioContext = new AudioContext()
+          console.log("🎵 AudioContext State:", audioContext.state)
+          console.log("🎵 AudioContext Sample Rate:", audioContext.sampleRate)
+          audioContext.close()
+        }
+        
+      } catch (error) {
+        console.error("❌ Audio Debug - Error checking audio permissions:", error)
+      }
+    }
+    
+    if (connectionState === ConnectionState.Connected) {
+      checkAudioPermissions()
+    }
+  }, [connectionState])
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -123,28 +303,13 @@ function TutorSessionContent() {
     }
   }, [isDraggingSidebar, isDraggingChat, sidebarWidth])
 
-  const [chatMessages, setChatMessages] = useState<{ sender: string, message: string }[]>([])
-
-  const { send } = useDataChannel("chat", { onMessage: (data) => {
-    const message = new TextDecoder().decode(data)
-    const chatMessage = JSON.parse(message)
-    setChatMessages((prev) => [...prev, chatMessage])
-  }})
-
   const sendMessage = () => {
-    if (message.trim() && send) {
-      const chatMessage = { 
-        sender: 'user', 
-        message: message 
-      }
-      const encodedMessage = new TextEncoder().encode(JSON.stringify(chatMessage))
-      send(encodedMessage)
-      setChatMessages((prev) => [...prev, chatMessage])
+    if (message.trim()) {
       setMessage("")
     }
   }
 
-  const isConnected = connectionState === "connected"
+  const isConnected = connectionState === ConnectionState.Connected
   const isMicEnabled = localParticipant?.isMicrophoneEnabled ?? false
 
   return (
@@ -220,35 +385,72 @@ function TutorSessionContent() {
             {/* Connection Status */}
             <div className="text-center mb-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                {isConnected ? CHAT_STRINGS.connected : CHAT_STRINGS.connecting}
+                {isConnected ? "Connected to Clara" : "Connecting..."}
               </h3>
               <p className="text-sm text-gray-600">
-                {isConnected ? CHAT_STRINGS.voiceAiSessionReady : CHAT_STRINGS.establishingConnection}
+                {isConnected ? "Voice AI session ready" : "Establishing connection..."}
               </p>
+              
+              {/* Agent Status Notification */}
+              {isConnected && (
+                <div className={`mt-3 px-3 py-2 rounded-full text-xs font-medium transition-all duration-300 ${
+                  agentStatus === 'connected' 
+                    ? 'bg-green-100 text-green-800 border border-green-200' 
+                    : agentStatus === 'connecting'
+                    ? 'bg-yellow-100 text-yellow-800 border border-yellow-200 animate-pulse'
+                    : 'bg-red-100 text-red-800 border border-red-200'
+                }`}>
+                  {agentStatus === 'connected' && '🤖 AI Tutor Connected'}
+                  {agentStatus === 'connecting' && '🔄 Calling AI Tutor...'}
+                  {agentStatus === 'disconnected' && '⚠️ AI Tutor Disconnected'}
+                </div>
+              )}
+
+              {/* Audio Debug Info */}
+              {isConnected && (
+                <div className="mt-2 text-xs text-gray-500 space-y-1">
+                  <div>
+                    Participants: {participants.length} | 
+                    Others: {participants.filter(p => p.identity !== localParticipant?.identity).length}
+                  </div>
+                  <div>
+                    Audio Tracks: {allAudioTracks.length} | 
+                    Remote Audio: {remoteAudioTracks.length}
+                  </div>
+                  {remoteAudioTracks.length > 0 && (
+                    <div className="text-green-600">
+                      ✅ Agent audio track detected
+                    </div>
+                  )}
+                  {remoteAudioTracks.length === 0 && agentStatus === 'connected' && (
+                    <div className="text-red-600">
+                      ⚠️ Agent connected but no audio track
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* LiveKit Controls */}
             <div className="flex gap-3 mb-6">
               <TrackToggle
-                source={Track.Source.Microphone}  // Use Track.Source
+                source={Track.Source.Microphone}
                 className={`w-14 h-14 rounded-full transition-all duration-300 flex items-center justify-center ${
                   isMicEnabled ? "bg-blue-600 hover:bg-blue-700 text-white" : "bg-red-500 hover:bg-red-600 text-white"
                 }`}
               ></TrackToggle>
 
               <TrackToggle
-                source={Track.Source.ScreenShare}  // Use Track.Source
+                source={Track.Source.ScreenShare}
                 className="w-14 h-14 rounded-full bg-gray-600 hover:bg-gray-700 text-white flex items-center justify-center"
               ></TrackToggle>
             </div>
 
-            <ChatHistory messages={chatMessages} />
-
-          {/* Chat Input */}
+            {/* Chat Input */}
             <div className="w-full max-w-sm mb-6">
               <div className="flex gap-2">
                 <Input
-                  placeholder={CHAT_STRINGS.typeToClara}
+                  placeholder="Type to Clara..."
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                   onKeyPress={(e) => e.key === "Enter" && sendMessage()}
@@ -264,7 +466,7 @@ function TutorSessionContent() {
           {/* Session Files */}
           {sessionFiles.length > 0 && (
             <div className="flex-shrink-0 w-full max-w-sm mx-auto">
-              <h4 className="text-sm font-medium text-gray-700 mb-2">{CHAT_STRINGS.sessionMaterials}</h4>
+              <h4 className="text-sm font-medium text-gray-700 mb-2">Session Materials:</h4>
               <div className="space-y-1 max-h-32 overflow-y-auto">
                 {sessionFiles.map((file, index) => (
                   <div key={index} className="text-xs text-gray-600 bg-gray-50 p-2 rounded">
@@ -295,8 +497,8 @@ function TutorSessionContent() {
           <div className="flex-shrink-0 p-6 bg-white border-b border-gray-200">
             <Card>
               <CardHeader className="pb-4">
-                <CardTitle className="text-2xl text-gray-900">{sessionContent ? sessionContent.title : CHAT_STRINGS.aiLessonContent}</CardTitle>
-                <p className="text-gray-600">{sessionContent ? CHAT_STRINGS.interactiveLesson : 'Interactive lessons and diagrams will appear here'}</p>
+                <CardTitle className="text-2xl text-gray-900">{title || "AI Lesson Content"}</CardTitle>
+                <p className="text-gray-600">Interactive lessons and diagrams will appear here</p>
               </CardHeader>
             </Card>
           </div>
@@ -304,101 +506,70 @@ function TutorSessionContent() {
           {/* Scrollable Content Area */}
           <div className="flex-1 overflow-y-auto p-6 bg-gray-50">
             <div className="max-w-4xl mx-auto">
-              {contentError ? (
+              {notes ? (
                 <Card className="mb-6">
-                  <CardContent className="p-8 text-center">
-                    <div className="text-red-500">
-                      <div className="w-16 h-16 bg-red-100 rounded-full mx-auto mb-4 flex items-center justify-center">
-                        <span className="text-2xl">⚠️</span>
+                  <CardContent className="p-8 prose max-w-none">
+                    <ReactMarkdown
+                      components={{
+                        code({ node, className, children, ...props }) {
+                          const match = /language-(\w+)/.exec(className || '')
+                          return match ? (
+                            <SyntaxHighlighter
+                              style={prism}
+                              language={match[1]}
+                              PreTag="div"
+                              {...props}
+                            >
+                              {String(children).replace(/\n$/, '')}
+                            </SyntaxHighlighter>
+                          ) : (
+                            <code className={className} {...props}>
+                              {children}
+                            </code>
+                          )
+                        }
+                      }}
+                    >
+                      {notes}
+                    </ReactMarkdown>
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card className="mb-6">
+                  <CardContent className="p-8">
+                    <div className="text-center text-gray-500">
+                      <div className="w-16 h-16 bg-gray-200 rounded-full mx-auto mb-4 flex items-center justify-center">
+                        <span className="text-2xl">📚</span>
                       </div>
-                      <h3 className="text-lg font-medium text-red-700 mb-2">{CHAT_STRINGS.contentRetrievalError}</h3>
-                      <p className="text-sm text-red-600 mb-4">{contentError}</p>
-                      <Button 
-                        onClick={() => window.location.reload()} 
-                        className="bg-blue-600 hover:bg-blue-700 text-white"
-                      >
-                        {CHAT_STRINGS.tryAgain}
-                      </Button>
+                      <h3 className="text-lg font-medium text-gray-700 mb-2">Lesson Content Loading...</h3>
+                      <p className="text-sm">
+                        Upload your materials and start a conversation to generate personalized lesson content, diagrams,
+                        and practice problems.
+                      </p>
                     </div>
                   </CardContent>
                 </Card>
-              ) : sessionContent ? (
-                <>
-                  <Card className="mb-6">
-                    <CardHeader className="pb-4">
-                      <CardTitle className="text-2xl text-gray-900">{sessionContent.title || 'AI Lesson Content'}</CardTitle>
-                    </CardHeader>
-                    <CardContent className="p-8">
-                      <div className="prose max-w-none">
-                        <ReactMarkdown>{sessionContent.notes}</ReactMarkdown>
-                      </div>
-                    </CardContent>
-                  </Card>
+              )}
 
-                  <Card className="mb-6">
-                    <CardHeader>
-                      <CardTitle className="text-lg text-gray-800">{CHAT_STRINGS.interactiveDiagrams}</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="bg-gray-100 rounded-lg p-4">
-                        {sessionContent.diagram ? (
-                          <div className="prose max-w-none">
-                          <ReactMarkdown>{sessionContent.diagram}</ReactMarkdown>
-                        </div>
-                        ) : (
-                          <p className="text-gray-500">{CHAT_STRINGS.noDiagramAvailable}</p>
-                        )}
+              {diagrams.length > 0 && (
+                <Card className="mb-6">
+                  <CardHeader>
+                    <CardTitle className="text-lg text-gray-800">Interactive Diagrams</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {diagrams.map((diagram, index) => (
+                      <div key={index} className="mermaid">
+                        {diagram.content}
                       </div>
-                    </CardContent>
-                  </Card>
-                </>
-              ) : (
-                <>
-                  <Card className="mb-6">
-                    <CardContent className="p-8">
-                      <div className="text-center text-gray-500">
-                        <div className="w-16 h-16 bg-gray-200 rounded-full mx-auto mb-4 flex items-center justify-center">
-                          <span className="text-2xl">📚</span>
-                        </div>
-                        <h3 className="text-lg font-medium text-gray-700 mb-2">{CHAT_STRINGS.lessonContentLoading}</h3>
-                        <p className="text-sm">
-                          {CHAT_STRINGS.generatingPersonalizedContent}
-                        </p>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  {/* Keep existing placeholder cards */}
-                  <Card className="mb-6">
-                    <CardHeader>
-                      <CardTitle className="text-lg text-gray-800">{CHAT_STRINGS.practiceProblems}</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="bg-gray-100 h-48 rounded-lg flex items-center justify-center">
-                        <p className="text-gray-500">AI-generated practice problems will appear here</p>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  <Card className="mb-6">
-                    <CardHeader>
-                      <CardTitle className="text-lg text-gray-800">{CHAT_STRINGS.stepByStepSolutions}</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="bg-gray-100 h-56 rounded-lg flex items-center justify-center">
-                        <p className="text-gray-500">Detailed solution walkthroughs will appear here</p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </>
+                    ))}
+                  </CardContent>
+                </Card>
               )}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Audio Renderer */}
-      <RoomAudioRenderer />
     </div>
   )
 }
@@ -406,59 +577,69 @@ function TutorSessionContent() {
 export default function TutorSessionPage() {
   const { user } = useUser()
   const [connectionData, setConnectionData] = useState<{ token: string; wsUrl: string } | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [room, setRoom] = useState<Room | undefined>(undefined);
 
   useEffect(() => {
     const connectToLiveKit = async () => {
-      if (!user) return
+      if (!user) {
+        console.log("🔄 LiveKit Connection: Waiting for user authentication...")
+        return
+      }
 
       try {
-        setIsLoading(true)
+        console.log("🚀 LiveKit Connection: Starting connection process...")
+        console.log("👤 User ID:", user.id)
+        console.log("📝 User Name:", user.firstName || user.id)
+        
         setError(null)
+
+        const requestBody = {
+          roomName: `tutor-session-${user.id}`,
+          participantName: user.firstName || user.id,
+          userId: user.id,
+        }
+        
+        console.log("📡 LiveKit Connection: Sending token request to /api/livekit/token")
+        console.log("📦 Request payload:", requestBody)
 
         const response = await fetch("/api/livekit/token", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            roomName: `tutor-session-${user.id}`,
-            participantName: user.firstName || user.id,
-            userId: user.id,
-          }),
+          body: JSON.stringify(requestBody),
         })
+
+        console.log("📨 LiveKit Connection: Response status:", response.status)
+        console.log("📨 LiveKit Connection: Response OK:", response.ok)
 
         if (!response.ok) {
           const errorData = await response.json()
+          console.error("❌ LiveKit Connection: Token request failed")
+          console.error("❌ Error details:", errorData)
           throw new Error(errorData.error || "Failed to connect to LiveKit")
         }
 
         const data = await response.json()
+        console.log("✅ LiveKit Connection: Token received successfully")
+        console.log("🔗 WebSocket URL:", data.wsUrl)
+        console.log("🎫 Token length:", data.token?.length || 0)
+        console.log("🤖 LiveKit Cloud Agent: Will auto-join when room connects")
+        
         setConnectionData(data)
+        console.log("🎯 LiveKit Connection: Connection data set, proceeding to room connection...")
       } catch (err) {
-        console.error("Error connecting to LiveKit:", err)
+        console.error("💥 LiveKit Connection: Error during connection process:", err)
+        console.error("💥 Error stack:", err instanceof Error ? err.stack : "No stack trace")
         setError(err instanceof Error ? err.message : "Failed to connect")
-      } finally {
-        setIsLoading(false)
       }
     }
 
     connectToLiveKit()
   }, [user])
 
-  if (isLoading) {
-    return (
-      <div className="h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 bg-blue-600 rounded-full mx-auto mb-4 animate-pulse"></div>
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">{CHAT_STRINGS.connectingToClara}</h2>
-          <p className="text-gray-600">{CHAT_STRINGS.settingUpTutoringSession}</p>
-        </div>
-      </div>
-    )
-  }
-
+  // Show error state if there's an error
   if (error) {
     return (
       <div className="h-screen bg-gray-50 flex items-center justify-center">
@@ -466,7 +647,7 @@ export default function TutorSessionPage() {
           <div className="w-16 h-16 bg-red-500 rounded-full mx-auto mb-4 flex items-center justify-center">
             <span className="text-white text-2xl">⚠️</span>
           </div>
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">{CHAT_STRINGS.connectionError}</h2>
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Connection Error</h2>
           <p className="text-gray-600 mb-4">{error}</p>
           <Button onClick={() => window.location.reload()} className="bg-blue-600 hover:bg-blue-700">
             Try Again
@@ -476,29 +657,106 @@ export default function TutorSessionPage() {
     )
   }
 
-  if (!connectionData) {
-    return (
-      <div className="h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">{CHAT_STRINGS.unableToConnect}</h2>
-          <p className="text-gray-600">{CHAT_STRINGS.pleaseRefresh}</p>
-        </div>
-      </div>
-    )
-  }
-
+  // Show the main interface immediately, even if connectionData is null
+  // LiveKit will handle the connection state internally
   return (
     <LiveKitRoom
       video={false}
       audio={true}
-      token={connectionData.token}
-      serverUrl={connectionData.wsUrl}
+      token={connectionData?.token || ""}
+      serverUrl={connectionData?.wsUrl || ""}
       data-lk-theme="default"
       style={{ height: "100vh" }}
-      onConnected={() => console.log("Connected to LiveKit room")}
-      onDisconnected={() => console.log("Disconnected from LiveKit room")}
+      onConnected={(roomInstance) => {
+        setRoom(roomInstance);
+        const lkRoom = window.lkRoom;
+        if (!lkRoom) {
+          console.warn("⚠️ Room object is not available");
+          return;
+        }
+
+        console.log("🎉 LiveKit Room: Successfully connected to room!");
+        console.log("🤖 LiveKit Cloud Agent: Waiting for agent to auto-join...");
+        
+        // Safe property access with null checks
+        const audioContextInfo = {
+          canPlayAudio: roomInstance.canPlaybackAudio,
+          audioContext: 'not available'
+        };
+        console.log("🎵 Room Audio Context:", audioContextInfo);
+        
+        // Set up audio track event handlers
+        const handleTrackSubscribed = (track: any, publication: any, participant: any) => {
+          try {
+            const trackInfo = {
+              trackKind: track?.kind,
+              trackSid: track?.sid,
+              participant: participant?.identity,
+              isAgent: participant?.identity !== roomInstance?.localParticipant?.identity,
+              isEnabled: track?.isEnabled,
+              isMuted: track?.isMuted
+            };
+            console.log("🎵 Track Subscribed:", trackInfo);
+            
+            if (track?.kind === 'audio' && participant?.identity !== roomInstance?.localParticipant?.identity) {
+              console.log("🎉 Agent Audio Track Subscribed!");
+              console.log("🎵 Audio Track Details:", {
+                trackSid: track.sid,
+                isEnabled: track.isEnabled,
+                isMuted: track.isMuted,
+                mediaStreamTrack: track.mediaStreamTrack ? {
+                  readyState: track.mediaStreamTrack.readyState,
+                  label: track.mediaStreamTrack.label || 'no label'
+                } : 'no mediaStreamTrack'
+              });
+            }
+          } catch (error) {
+            console.error("❌ Error in trackSubscribed handler:", error);
+          }
+        };
+        
+        const handleTrackUnsubscribed = (track: any, publication: any, participant: any) => {
+          try {
+            console.log("🎵 Track Unsubscribed:", {
+              trackKind: track?.kind,
+              participant: participant?.identity
+            });
+          } catch (error) {
+            console.error("❌ Error in trackUnsubscribed handler:", error);
+          }
+        };
+        
+        // Add event listeners
+        roomInstance.on('trackSubscribed', handleTrackSubscribed);
+        roomInstance.on('trackUnsubscribed', handleTrackUnsubscribed);
+        
+        // Cleanup function to remove listeners
+        const cleanup = () => {
+          if (roomInstance) {
+            roomInstance.off('trackSubscribed', handleTrackSubscribed);
+            roomInstance.off('trackUnsubscribed', handleTrackUnsubscribed);
+          }
+          delete window.lkRoom;
+        };
+        
+        // Store cleanup function
+        (window as any).cleanupRoomListeners = cleanup;
+      }}
+      onDisconnected={(reason) => {
+        console.log("👋 LiveKit Room: Disconnected from room");
+        console.log("📝 Disconnect reason:", reason);
+        delete (window as any).lkRoom;
+      }}
+      onError={(error) => {
+        console.error("🚨 LiveKit Room: Connection error occurred");
+        console.error("🚨 Error details:", error);
+        console.error("🚨 Error message:", error.message);
+        delete (window as any).lkRoom;
+      }}
     >
-      <TutorSessionContent />
+      <TutorSessionContent room={room} />
+      <RoomAudioRenderer />
+      <StartAudio label="Click to enable audio" />
     </LiveKitRoom>
-  )
+  );
 }

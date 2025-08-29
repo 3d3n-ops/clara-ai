@@ -1,316 +1,394 @@
-import os
-import asyncio
-import logging
-import redis.asyncio as redis
-import httpx  # Ensure this is imported for async HTTP requests
-
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-
-import PyPDF2
-import docx
-from pptx import Presentation
-import openai
+from pydantic import BaseModel
+from typing import List, Dict, Any, Optional
+import uvicorn
+import tempfile
+import os
+import secrets
+import asyncio
+import json
+from datetime import datetime
+from collections import defaultdict
+import time
+import base64
 from dotenv import load_dotenv
+import redis
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('backend_server.log'),  # Log to file
-        logging.StreamHandler()  # Also log to console
-    ]
-)
-logger = logging.getLogger(__name__)
-
-# Load environment variables
+# Load environment variables from .env file first
 load_dotenv()
 
-# Initialize FastAPI app
-app = FastAPI()
+# Initialize Redis client with proper error handling
+REDIS_URL = os.getenv('REDIS_URL')
+redis_client = None
+if REDIS_URL:
+    try:
+        redis_client = redis.from_url(REDIS_URL, ssl_cert_reqs=None)
+        # Test the connection
+        redis_client.ping()
+        print("Successfully connected to Redis")
+    except Exception as e:
+        print(f"Warning: Could not connect to Redis: {e}")
+        redis_client = None
 
-# CORS Configuration
+from groq import Groq
+
+app = FastAPI(title="Clara AI Backend Server", version="1.0.0")
+
+# Production CORS settings - only allow your frontend domain
+ALLOWED_ORIGINS = [
+    os.getenv('FRONTEND_URL', 'https://try-clara.vercel.app'),  # Production frontend
+    "https://www.clara-ai.org",  # Production frontend alternative
+    "http://localhost:3000",  # Development only
+    "http://localhost:3001",  # Development only
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["*"],
 )
 
-# Initialize Redis client
-try:
-    redis_url = os.getenv("REDIS_URL")
-    if not redis_url:
-        logger.warning("REDIS_URL not set, using default localhost URL")
-        redis_url = "redis://localhost:6379"
+# Rate limiting (in production, use Redis)
+rate_limit_store = defaultdict(list)
+RATE_LIMIT_WINDOW = 60  # seconds
+RATE_LIMIT_MAX_REQUESTS = 100
+
+def check_rate_limit(user_id: str) -> bool:
+    """Simple rate limiting - in production use Redis"""
+    now = time.time()
+    user_requests = rate_limit_store[user_id]
     
-    redis_client = redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
-    logger.info(f"Redis client initialized with URL: {redis_url}")
-except Exception as e:
-    logger.error(f"Failed to initialize Redis client: {e}")
-    redis_client = None
-
-# Modify OpenAI client initialization
-try:
-    openai.api_key = os.getenv("OPENAI_API_KEY")
-    if not openai.api_key:
-        logger.error("OpenAI API key not found in environment variables")
+    # Remove old requests
+    user_requests[:] = [req_time for req_time in user_requests if now - req_time < RATE_LIMIT_WINDOW]
     
-    # Use async client
-    openai.async_client = openai.AsyncOpenAI(
-        api_key=openai.api_key,
-        http_client=httpx.AsyncClient()
-    )
-except Exception as e:
-    logger.error(f"Error setting up OpenAI async client: {e}")
-    openai.async_client = None
+    if len(user_requests) >= RATE_LIMIT_MAX_REQUESTS:
+        return False
+    
+    user_requests.append(now)
+    return True
 
-def extract_text_from_pdf(file) -> str:
-    """Extract text from PDF file."""
+# Pydantic models
+class ChatRequest(BaseModel):
+    message: str
+    conversation_history: Optional[List[Dict[str, Any]]] = []
+    conversation_id: Optional[str] = None
+    folder_id: Optional[str] = None
+    user_id: Optional[str] = None
+
+class FileUploadRequest(BaseModel):
+    filename: str
+    content: str
+    content_type: Optional[str] = "text"  # "text" or "binary"
+    folder_id: Optional[str] = None
+    user_id: Optional[str] = None
+
+class FolderRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    user_id: Optional[str] = None
+
+class LectureMaterialRequest(BaseModel):
+    file_content: str  # Base64 encoded file content
+    file_name: str
+    file_type: str  # pdf, docx, txt, etc.
+    user_id: str
+
+class ProcessedContent(BaseModel):
+    title: str
+    notes: str
+    diagrams: List[Dict[str, str]]  # List of {type: "mermaid|image", content: "..."}
+    flashcards: List[Dict[str, str]]  # List of {question: "...", answer: "..."}
+
+# ============================================================================
+# HEALTH & STATUS ENDPOINTS
+# ============================================================================
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy", 
+        "service": "Clara AI Backend Server",
+        "timestamp": datetime.now().isoformat(),
+        "features": {
+            "voice_agent": "enabled",
+            "basic_api": "enabled"
+        }
+    }
+
+@app.get("/")
+async def root():
+    """Root endpoint with service information"""
+    return {
+        "service": "Clara AI Backend Server",
+        "version": "1.0.0",
+        "description": "Simplified backend for voice agent and basic API endpoints",
+        "endpoints": {
+            "health": "/health",
+        }
+    }
+
+# ============================================================================
+# SIMPLE API ENDPOINTS (RAG functionality removed)
+# ============================================================================
+
+@app.post("/api/simple-chat")
+async def simple_chat(request: ChatRequest):
+    """Simple chat endpoint without RAG"""
     try:
-        logger.info("Extracting text from PDF file")
-        reader = PyPDF2.PdfReader(file)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() + "\n"
-        logger.info(f"Extracted {len(text)} characters from PDF")
-        return text
+        # Rate limiting check
+        user_id = request.user_id or 'anonymous'
+        if not check_rate_limit(user_id):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded")
+        
+        # Simple response without RAG
+        response_text = f"I received your message: '{request.message}'. This is a simple response without RAG functionality."
+        
+        return {
+            "response": response_text,
+            "conversation_id": request.conversation_id,
+            "timestamp": datetime.now().isoformat()
+        }
     except Exception as e:
-        logger.error(f"Error extracting text from PDF: {e}")
-        raise
+        raise HTTPException(status_code=500, detail=str(e))
 
-def extract_text_from_docx(file) -> str:
-    """Extract text from DOCX file."""
+def call_groq_title(content: str) -> str:
+    """Synchronous function to call Groq API for a title."""
     try:
-        logger.info("Extracting text from DOCX file")
-        doc = docx.Document(file)
-        text = "\n".join([p.text for p in doc.paragraphs])
-        logger.info(f"Extracted {len(text)} characters from DOCX")
-        return text
+        client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant that generates a concise and engaging title for a study session based on the provided content. The title should be no more than 10 words."
+                },
+                {
+                    "role": "user",
+                    "content": f"Please generate a title for a study session based on the following content:\n\n{content}"
+                }
+            ]
+        )
+        return response.choices[0].message.content
     except Exception as e:
-        logger.error(f"Error extracting text from DOCX: {e}")
-        raise
+        print(f"Error generating title: {e}")
+        return "Study Session"
 
-def extract_text_from_ppt(file) -> str:
-    """Extract text from PPT file."""
+async def process_title(content: str) -> str:
+    """Process content to generate a title using Groq."""
+    return await asyncio.to_thread(call_groq_title, content)
+
+def call_groq_notes(content: str) -> str:
+    """Synchronous function to call Groq API for notes."""
     try:
-        logger.info("Extracting text from PPT file")
-        presentation = Presentation(file)
-        text = []
-        for slide in presentation.slides:
-            for shape in slide.shapes:
-                if shape.has_text_frame:
-                    for paragraph in shape.text_frame.paragraphs:
-                        for run in paragraph.runs:
-                            text.append(run.text)
-        extracted_text = "\n".join(text)
-        logger.info(f"Extracted {len(extracted_text)} characters from PPT")
-        return extracted_text
+        client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant that summarizes educational content into clear and concise study notes in Markdown format. Use appropriate Markdown formatting for headers, lists, and code snippets. For code snippets, use triple backticks with the language specified, for example: ```python\nprint('Hello, World!')\n```."
+                },
+                {
+                    "role": "user",
+                    "content": f"Please generate study notes for the following content:\n\n{content}"
+                }
+            ]
+        )
+        return response.choices[0].message.content
     except Exception as e:
-        logger.error(f"Error extracting text from PPT: {e}")
-        raise
+        print(f"Error generating notes: {e}")
+        return "# Error Generating Notes\n\nCould not generate notes at this time."
 
-@app.post("/file-upload/")
-async def upload_file(file: UploadFile = File(...)):
+async def process_notes(content: str) -> str:
+    """Process content to generate study notes using Groq."""
+    return await asyncio.to_thread(call_groq_notes, content)
+
+def call_groq_diagrams(content: str) -> List[Dict[str, str]]:
+    """Synchronous function to call Groq API for diagrams."""
+    try:
+        client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant that generates Mermaid.js diagrams to explain key concepts in educational content. Respond with only the Mermaid.js syntax inside a single code block. For example: ```mermaid\ngraph TD...```. If you have multiple diagrams, separate them with '---'. Do not include any other text or explanations outside the code blocks."
+                },
+                {
+                    "role": "user",
+                    "content": f"Please generate Mermaid.js diagrams for the key concepts in the following content:\n\n{content}"
+                }
+            ]
+        )
+        diagram_syntax = response.choices[0].message.content
+        # Clean up the response to get only the Mermaid syntax
+        diagrams = []
+        for block in diagram_syntax.split("---"):
+            cleaned_block = block.strip()
+            if cleaned_block.startswith("```mermaid"):
+                cleaned_block = cleaned_block[len("```mermaid"):
+].strip()
+            if cleaned_block.endswith("```"):
+                cleaned_block = cleaned_block[:-len("```")].strip()
+            if cleaned_block:
+                diagrams.append({"type": "mermaid", "content": cleaned_block})
+        return diagrams
+    except Exception as e:
+        print(f"Error generating diagrams: {e}")
+        return []
+
+
+async def process_diagrams(content: str) -> List[Dict[str, str]]:
+    """Process content to generate Mermaid.js diagrams using Groq."""
+    return await asyncio.to_thread(call_groq_diagrams, content)
+
+
+async def process_flashcards(content: str) -> List[Dict[str, str]]:
+    """Process content to generate flashcards"""
+    # TODO: Implement actual flashcard generation logic
+    await asyncio.sleep(2.5)  # Simulate processing time
+    return [
+        {"question": "What is the main topic of the lecture?", "answer": "The main topic is..."},
+        {"question": "What are the key points discussed?", "answer": "The key points are..."}
+    ]
+
+def call_groq_lesson_plan_summary(content: str) -> str:
+    """Synchronous function to call Groq API for a lesson plan summary."""
+    try:
+        client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant that generates a concise lesson plan summary from educational content. Focus on key topics, learning objectives, and a brief outline of the material. The summary should be in Markdown format."
+                },
+                {
+                    "role": "user",
+                    "content": f"Please generate a lesson plan summary for the following content:\n\n{content}"
+                }
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"Error generating lesson plan summary: {e}")
+        return "# Error Generating Lesson Plan Summary\n\nCould not generate summary at this time."
+
+async def process_lesson_plan_summary(content: str) -> str:
+    """Process content to generate a lesson plan summary using Groq."""
+    return await asyncio.to_thread(call_groq_lesson_plan_summary, content)
+
+@app.post("/api/process-lecture", response_model=ProcessedContent)
+async def process_lecture_material(user_id: str = Form(...), file: UploadFile = File(...)):
     """
-    Upload and process file, generate notes, diagram, and title.
-    Store summary in Redis cache.
+    Process uploaded lecture material and generate notes, diagrams, and flashcards in parallel.
+    Caches the result in Redis to avoid reprocessing the same file.
     """
+    print(f"--- Processing lecture material for user_id: {user_id}, file: {file.filename} ---")
+    
+    # Create a unique cache key for the file and user
+    cache_key = f"lecture_content:{user_id}:{file.filename}"
+    
     try:
-        # Validate file size (10MB limit)
-        file.file.seek(0, 2)  # Move to end of file
-        file_size = file.file.tell()
-        file.file.seek(0)  # Reset file pointer
+        # Check if the content is already cached in Redis
+        cached_content = redis_client.get(cache_key)
+        if cached_content:
+            print(f"--- Found cached content for key: {cache_key} ---")
+            return json.loads(cached_content)
+            
+        print(f"--- No cached content found for key: {cache_key}. Processing file. ---")
+
+        # Rate limiting check
+        if not check_rate_limit(user_id):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded")
         
-        MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-        if file_size > MAX_FILE_SIZE:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"File size exceeds maximum limit of 10MB. Current size: {file_size/1024/1024:.2f}MB"
-            )
-        
-        # Validate file extension
-        if not file.filename:
-            raise HTTPException(status_code=400, detail="Invalid file name")
-        
-        file_ext = file.filename.lower().split('.')[-1]
-        ALLOWED_EXTENSIONS = {'pdf', 'docx', 'pptx', 'txt', 'png', 'jpg', 'jpeg'}
-        
-        if file_ext not in ALLOWED_EXTENSIONS:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Unsupported file type. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}"
-            )
-        
-        logger.info(f"Received file upload: {file.filename}")
-        
-        # Determine file type and extract text
-        if file.filename.endswith(".pdf"):
-            logger.info("Detected PDF file")
-            text = extract_text_from_pdf(file.file)
-        elif file.filename.endswith(".docx"):
-            logger.info("Detected DOCX file")
-            text = extract_text_from_docx(file.file)
-        elif file.filename.endswith(".pptx"):
-            logger.info("Detected PPTX file")
-            text = extract_text_from_ppt(file.file)
-        elif file.filename.lower().endswith(('.png', '.jpg', '.jpeg', '.txt')):
-            # For images and text files, we'll use a simple text extraction
-            text = await file.read()
-            text = text.decode('utf-8') if isinstance(text, bytes) else str(text)
+        print(f"[1/5] Saving uploaded file to a temporary location...")
+        # Save to a temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp_file:
+            temp_file.write(await file.read())
+            temp_file_path = temp_file.name
+        print(f"--- Saved file to temporary path: {temp_file_path} ---")
+
+        # Extract text from the file
+        print(f"[2/5] Extracting text from file...")
+        extracted_text = ""
+        file_type = file.filename.split(".").pop() or ""
+        if file_type == "pdf":
+            import pypdf
+            with open(temp_file_path, "rb") as f:
+                reader = pypdf.PdfReader(f)
+                for page in reader.pages:
+                    extracted_text += page.extract_text()
+        elif file_type == "docx":
+            import docx2txt
+            extracted_text = docx2txt.process(temp_file_path)
         else:
-            logger.warning(f"Unsupported file format: {file.filename}")
-            raise HTTPException(status_code=400, detail="Unsupported file format")
+            with open(temp_file_path, "r") as f:
+                extracted_text = f.read()
+        print(f"--- Extracted text snippet: {extracted_text[:200]}... ---")
 
-        logger.info(f"Extracted {len(text)} total characters from file")
+        # Clean up the temporary file
+        os.unlink(temp_file_path)
+        print(f"--- Deleted temporary file: {temp_file_path} ---")
 
-        # Async tasks for generating content
-        logger.info("Starting OpenAI tasks for notes, diagram, and title generation")
+        # Process content in parallel
+        print("[3/5] Calling Groq API to generate title, notes, diagrams, and lesson plan summary...")
+        title_task = asyncio.create_task(process_title(extracted_text))
+        notes_task = asyncio.create_task(process_notes(extracted_text))
+        diagrams_task = asyncio.create_task(process_diagrams(extracted_text))
+        lesson_plan_summary_task = asyncio.create_task(process_lesson_plan_summary(extracted_text))
         
-        try:
-            # Use async_client for API calls
-            notes_response = await openai.async_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a helpful note-taker."},
-                    {"role": "user", "content": f"Make clear, concise study notes on the following text: \n\n{text}"}
-                ],
-                max_tokens=500
-            )
+        # Wait for all tasks to complete
+        title, notes, diagrams, lesson_plan_summary = await asyncio.gather(
+            title_task, notes_task, diagrams_task, lesson_plan_summary_task
+        )
+        print(f"--- Groq response for title: {title} ---")
+        print(f"--- Groq response for notes: {notes[:100]}... ---")
+        print(f"--- Groq response for diagrams: {diagrams} ---")
+        print(f"--- Groq response for lesson plan summary: {lesson_plan_summary[:100]}... ---")
 
-            diagram_response = await openai.async_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a diagram generator for visual learners."},
-                    {"role": "user", "content": f"Make clear and understandable diagrams on the following text: \n\n{text}"}
-                ],
-                max_tokens=300
-            )
-
-            title_response = await openai.async_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a helpful note-title generator."},
-                    {"role": "user", "content": f"Make simple title on the following text: \n\n{text}"}
-                ],
-                max_tokens=50
-            )
-
-            # Extract results with additional validation
-            notes = notes_response.choices[0].message.content or "No notes generated"
-            diagram = diagram_response.choices[0].message.content or "No diagram generated"
-            title = title_response.choices[0].message.content or "Untitled"
-
-            logger.info("Successfully generated notes, diagram, and title")
-
-        except Exception as e:
-            logger.error(f"Error generating content with OpenAI: {e}", exc_info=True)
-            notes = "Error generating notes"
-            diagram = "Error generating diagram"
-            title = "Error generating title"
-
-        # Store summary in Redis with a unique key
-        summary_key = f"summary:{hash(text)}"
+        # Store lesson plan summary in Redis
+        redis_key = f"lesson_summary:{user_id}:{file.filename}"
+        redis_client.set(redis_key, lesson_plan_summary)
+        print(f"--- Stored lesson plan summary in Redis with key: {redis_key} ---")
         
-        if redis_client:
-            try:
-                await redis_client.hset(summary_key, mapping={
-                    "title": title,
-                    "notes": notes,
-                    "diagram": diagram
-                })
-                # Optional: Set expiration for the key (e.g., 1 hour)
-                await redis_client.expire(summary_key, 3600)
-                logger.info(f"Stored summary in Redis with key: {summary_key}")
-            except Exception as redis_error:
-                logger.error(f"Failed to store summary in Redis: {redis_error}")
-        else:
-            logger.warning("Redis client not initialized, skipping cache storage")
-
-        return JSONResponse(content={
+        processed_content = {
             "title": title,
             "notes": notes,
-            "diagram": diagram,
-            "cache_key": summary_key
-        })
+            "diagrams": diagrams,
+            "flashcards": [] # Return empty list for now
+        }
+        
+        # Cache the processed content in Redis for 1 hour (3600 seconds)
+        redis_client.set(cache_key, json.dumps(processed_content), ex=3600)
+        print(f"--- Cached processed content in Redis with key: {cache_key} ---")
 
-    except HTTPException as http_error:
-        logger.error(f"HTTP Error: {http_error.detail}")
-        raise
+        print("[5/5] Returning processed content to the frontend.")
+        return processed_content
+        
     except Exception as e:
-        # Comprehensive error handling
-        logger.error(f"Unexpected error during file upload: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=500, 
-            content={"error": str(e), "message": "An error occurred while processing the file"}
-        )
+        print(f"--- ERROR processing lecture material: {e} ---")
+        raise HTTPException(status_code=500, detail=f"Error processing lecture material: {str(e)}")
 
-# Optional: Add a route to retrieve cached summary
-@app.get("/summary/{cache_key}")
-async def get_summary(cache_key: str):
-    """Retrieve a previously generated summary from Redis cache."""
-    try:
-        logger.info(f"Attempting to retrieve summary for key: {cache_key}")
-        
-        if not redis_client:
-            logger.error("Redis client not initialized")
-            raise HTTPException(status_code=500, detail="Redis client not available")
-        
-        summary = await redis_client.hgetall(cache_key)
-        
-        if not summary:
-            logger.warning(f"No summary found for key: {cache_key}")
-            raise HTTPException(status_code=404, detail="Summary not found")
-        
-        logger.info(f"Successfully retrieved summary for key: {cache_key}")
-        return summary
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error retrieving summary: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=500, 
-            content={"error": str(e), "message": "An error occurred while retrieving the summary"}
-        )
+# ============================================================================
+# STARTUP AND SHUTDOWN EVENTS
+# ============================================================================
 
-# Optional: Startup event to verify connections
 @app.on_event("startup")
 async def startup_event():
-    """Verify connections on startup."""
-    logger.info("Application starting up")
-    
-    # Verify Redis connection
-    if redis_client:
-        try:
-            await redis_client.ping()
-            logger.info("Successfully connected to Redis")
-        except Exception as e:
-            logger.error(f"Failed to connect to Redis: {e}")
-    
-    # Verify OpenAI API key
-    try:
-        # A simple test to verify OpenAI API key
-        openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": "Test connection"}],
-            max_tokens=10
-        )
-        logger.info("Successfully verified OpenAI API connection")
-    except Exception as e:
-        logger.error(f"Failed to verify OpenAI API connection: {e}")
+    """Initialize services on startup"""
+    print("🚀 Starting Clara AI Backend Server...")
+    print("📋 Services:")
+    print("   - Voice Agent: Enabled")
+    print("   - Basic API: Enabled")
+    print("✅ Server started successfully")
 
-# Optional: Shutdown event for cleanup
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Perform cleanup on application shutdown."""
-    logger.info("Application shutting down")
-    
-    if redis_client:
-        try:
-            await redis_client.close()
-            logger.info("Redis client closed successfully")
-        except Exception as e:
-            logger.error(f"Error closing Redis client: {e}") 
+    """Clean up on shutdown"""
+    print("🛑 Shutting down Clara AI Backend Server...") 

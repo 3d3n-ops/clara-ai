@@ -1,11 +1,8 @@
 fastapi
 uvicorn
 python-multipart
-PyPDF2
+pypdf
 python-docx
-python-pptx
-openai
 redis
 python-dotenv
-python-jose[cryptography]
-passlib[bcrypt]
+groq

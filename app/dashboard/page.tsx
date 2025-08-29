@@ -16,7 +16,8 @@ export default function DashboardPage() {
   const [currentSubject, setCurrentSubject] = useState(0)
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
   const [uploadError, setUploadError] = useState<string | null>(null)
-  const [isUploading, setIsUploading] = useState(false)
+
+  const [processing, setProcessing] = useState(false)
 
   const subjects = [
     "Calculus II",
@@ -27,6 +28,9 @@ export default function DashboardPage() {
     "Linear Algebra",
     "Statistics",
     "Computer Science",
+    "Calculus I",
+    "Philosophy",
+    "Distributed Systems",
   ]
 
   useEffect(() => {
@@ -37,99 +41,63 @@ export default function DashboardPage() {
     return () => clearInterval(interval)
   }, [subjects.length])
 
-  // File validation function
-  const validateFiles = (files: File[]): boolean => {
-    const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
-    const ALLOWED_TYPES = [
-      'application/pdf', 
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 
-      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      'image/png', 
-      'image/jpeg', 
-      'text/plain'
-    ]
-
-    for (const file of files) {
-      // Check file type
-      if (!ALLOWED_TYPES.includes(file.type)) {
-        setUploadError(`Unsupported file type: ${file.name}. Allowed types: PDF, DOCX, PPTX, TXT, PNG, JPG`)
-        return false
-      }
-
-      // Check file size
-      if (file.size > MAX_FILE_SIZE) {
-        setUploadError(`File ${file.name} is too large. Maximum file size is 10MB.`)
-        return false
-      }
-    }
-
-    return true
-  }
-
-  const startTutorSession = async () => {
-    // Clear previous errors
-    setUploadError(null)
-
-    // Explicit check for uploaded files
-    if (uploadedFiles.length === 0) {
-      setUploadError('Please upload a file before starting a tutor session')
-      return
-    }
-
-    // Validate files before upload
-    if (!validateFiles(uploadedFiles)) {
-      return
-    }
-
-    // Prevent multiple simultaneous uploads
-    if (isUploading) return
-
-    try {
-      setIsUploading(true)
-
-      // Create FormData for file upload
-      const formData = new FormData()
-      uploadedFiles.forEach(file => {
-        formData.append('file', file)
-      })
-
-      // Send files to backend
-      const response = await fetch(`${process.env.NEXT_PUBLIC_LOCAL_API_URL}/file-upload/`, {
-        method: 'POST',
-        body: formData
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.message || 'File upload failed')
-      }
-
-      const { cache_key } = await response.json()
-      
-      // Store cache key in localStorage for tutor session
-      localStorage.setItem('sessionCacheKey', cache_key)
-      localStorage.setItem('sessionFiles', JSON.stringify(uploadedFiles.map(file => ({ name: file.name, size: file.size }))))
-      
-      // Navigate to tutor session
-      router.push('/tutor-session')
-    } catch (error) {
-      console.error('Upload error:', error)
-      setUploadError(error instanceof Error ? error.message : 'An unexpected error occurred')
-    } finally {
-      setIsUploading(false)
-    }
-  }
-
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
     if (files) {
-      const newFiles = Array.from(files)
-      
-      // Validate files
-      if (validateFiles(newFiles)) {
-        setUploadedFiles(newFiles)
-        setUploadError(null)
+      const file = files[0]
+      // Validate file type
+      const allowedTypes = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain"]
+      if (!allowedTypes.includes(file.type)) {
+        setUploadError("Invalid file type. Please upload a PDF, DOCX, or TXT file.")
+        return
       }
+
+      // Validate file size (e.g., 10MB limit)
+      const maxSizeInBytes = 10 * 1024 * 1024
+      if (file.size > maxSizeInBytes) {
+        setUploadError("File size exceeds 10MB. Please upload a smaller file.")
+        return
+      }
+
+      setUploadError(null)
+      setUploadedFiles(Array.from(files))
+    }
+  }
+
+  const startTutorSession = async () => {
+    if (uploadedFiles.length === 0 || uploadError) {
+      // Show a toast or message to the user to upload a valid file
+      return
+    }
+
+    setProcessing(true)
+
+    const file = uploadedFiles[0]
+    const formData = new FormData()
+    formData.append("file", file)
+    formData.append("user_id", user?.id || "")
+
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_LOCAL_API_URL}/api/process-lecture`, {
+        method: "POST",
+        body: formData,
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        // Store the generated content in localStorage to pass to the next page
+        localStorage.setItem("generatedContent", JSON.stringify(data))
+        router.push("/tutor-session")
+      } else {
+        // TODO: Handle error with a toast message
+        console.error("Failed to process lecture material")
+        setUploadError("Failed to process lecture material. Please try again.")
+      }
+    } catch (error) {
+      console.error("Error processing lecture material:", error)
+      setUploadError("An error occurred. Please try again.")
+    } finally {
+      setProcessing(false)
     }
   }
 
@@ -184,7 +152,6 @@ export default function DashboardPage() {
             <span key={currentSubject} className="text-blue-600 inline-block animate-fade-in">
               {subjects[currentSubject]}
             </span>{" "}
-            today
           </h1>
 
           {/* File Upload Section */}
@@ -200,15 +167,9 @@ export default function DashboardPage() {
                       </div>
                     ))}
                   </div>
+                  {uploadError && <p className="text-red-500 text-sm mt-2">{uploadError}</p>}
                 </CardContent>
               </Card>
-            </div>
-          )}
-
-          {/* Error Message */}
-          {uploadError && (
-            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
-              {uploadError}
             </div>
           )}
 
@@ -217,10 +178,10 @@ export default function DashboardPage() {
             <div className="flex gap-4 justify-center">
               <Button
                 onClick={startTutorSession}
-                disabled={uploadedFiles.length === 0 || isUploading}
                 className="bg-black hover:bg-gray-800 text-white px-8 py-3 text-lg font-medium rounded-full"
+                disabled={processing}
               >
-                {isUploading ? 'Uploading...' : 'Tutor me!'}
+                {processing ? "Processing..." : "Tutor me!"}
               </Button>
               <Link href="/chat/homework">
                 <Button
@@ -248,13 +209,13 @@ export default function DashboardPage() {
                   className="cursor-pointer bg-white border-dashed border-2 border-gray-300 hover:border-blue-400 px-6 py-3"
                   asChild
                 >
-                  <div className="flex items-center gap-2">
+                  <span>
                     <Upload className="w-5 h-5" />
                     Upload your lectures
-                  </div>
+                  </span>
                 </Button>
               </label>
-              <p className="text-sm text-gray-500 mt-2">PDF, DOC, TXT, Images, PowerPoint supported (max 10MB)</p>
+              <p className="text-sm text-gray-500 mt-2">PDF, DOC, TXT, Images, PowerPoint supported</p>
             </div>
           </div>
         </div>

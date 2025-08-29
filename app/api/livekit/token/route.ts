@@ -4,8 +4,6 @@ import { AccessToken } from 'livekit-server-sdk'
 export async function POST(request: NextRequest) {
   try {
     const { roomName, userId, participantName } = await request.json()
-
-    // Handle both old format (userId) and new format (participantName)
     const identity = userId || participantName
 
     if (!roomName || !identity) {
@@ -15,9 +13,9 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Get LiveKit credentials from environment variables
+    // These are the verified environment variable names
     const apiKey = process.env.LIVEKIT_API_KEY
-    const apiSecret = process.env.LIVEKIT_API_SECRET
+    const apiSecret = process.env.LIVEKIT_API_SECRET  
     const livekitUrl = process.env.LIVEKIT_URL
 
     if (!apiKey || !apiSecret || !livekitUrl) {
@@ -27,13 +25,11 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Create access token
     const at = new AccessToken(apiKey, apiSecret, {
       identity: identity,
       name: `User-${identity}`,
     })
 
-    // Grant permissions for the room
     at.addGrant({
       room: roomName,
       roomJoin: true,
@@ -42,12 +38,11 @@ export async function POST(request: NextRequest) {
       canPublishData: true,
     })
 
-    // Generate token
     const token = await at.toJwt()
 
-    
+    console.log("✅ LiveKit Token: Generated token for room:", roomName)
+    console.log("🤖 LiveKit Cloud Agent: Will auto-join when user connects")
 
-    // Return both token and wsUrl for frontend connection
     return NextResponse.json({ 
       token,
       wsUrl: livekitUrl
@@ -59,4 +54,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     )
   }
-} 
+}

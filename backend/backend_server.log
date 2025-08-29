@@ -157,3 +157,18 @@ TypeError: object ChatCompletion can't be used in 'await' expression
 2025-08-28 18:02:00,191 - backend_server - INFO - Stored summary in Redis with key: summary:1946931260261959371
 2025-08-28 18:02:01,940 - backend_server - INFO - Attempting to retrieve summary for key: summary:1946931260261959371
 2025-08-28 18:02:02,048 - backend_server - INFO - Successfully retrieved summary for key: summary:1946931260261959371
+2025-08-28 18:52:23,078 - backend_server - INFO - Received file upload: cis110-11fa-01-1up.pdf
+2025-08-28 18:52:23,081 - backend_server - INFO - Detected PDF file
+2025-08-28 18:52:23,081 - backend_server - INFO - Extracting text from PDF file
+2025-08-28 18:52:23,361 - backend_server - INFO - Extracted 8914 characters from PDF
+2025-08-28 18:52:23,361 - backend_server - INFO - Extracted 8914 total characters from file
+2025-08-28 18:52:23,361 - backend_server - INFO - Starting OpenAI tasks for notes, diagram, and title generation
+2025-08-28 18:52:31,821 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-28 18:52:36,083 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-28 18:52:37,241 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-08-28 18:52:37,255 - backend_server - INFO - Successfully generated notes, diagram, and title
+2025-08-28 18:52:37,491 - backend_server - INFO - Stored summary in Redis with key: summary:1946931260261959371
+2025-08-28 18:54:48,778 - backend_server - INFO - Attempting to retrieve summary for key: summary:1946931260261959371
+2025-08-28 18:54:48,885 - backend_server - INFO - Successfully retrieved summary for key: summary:1946931260261959371
+2025-08-28 19:11:14,365 - backend_server - INFO - Application shutting down
+2025-08-28 19:11:14,450 - backend_server - INFO - Redis client closed successfully
