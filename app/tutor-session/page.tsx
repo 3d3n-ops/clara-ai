@@ -17,6 +17,7 @@ import {
   useParticipants,
   useRemoteParticipants,
   StartAudio,
+  useLiveKitRoom,
 } from "@livekit/components-react" 
 import { Track, ConnectionState, Room } from "livekit-client"
 import "@livekit/components-styles"
@@ -623,11 +624,62 @@ function TutorSessionContent({ room }: TutorSessionContentProps) {
   )
 }
 
+function LiveKitSetup() {
+  const { room } = useLiveKitRoom();
+
+  useEffect(() => {
+    if (room) {
+      console.log("🎉 LiveKit Room: Successfully connected to room!");
+      console.log("🤖 LiveKit Cloud Agent: Waiting for agent to auto-join...");
+
+      const handleTrackSubscribed = (track: any, publication: any, participant: any) => {
+        try {
+          const trackInfo = {
+            trackKind: track?.kind,
+            trackSid: track?.sid,
+            participant: participant?.identity,
+            isAgent: participant?.identity !== room?.localParticipant?.identity,
+            isEnabled: track?.isEnabled,
+            isMuted: track?.isMuted
+          };
+          console.log("🎵 Track Subscribed:", trackInfo);
+
+          if (track?.kind === 'audio' && participant?.identity !== room?.localParticipant?.identity) {
+            console.log("🎉 Agent Audio Track Subscribed!");
+          }
+        } catch (error) {
+          console.error("❌ Error in trackSubscribed handler:", error);
+        }
+      };
+
+      const handleTrackUnsubscribed = (track: any, publication: any, participant: any) => {
+        try {
+          console.log("🎵 Track Unsubscribed:", {
+            trackKind: track?.kind,
+            participant: participant?.identity
+          });
+        } catch (error) {
+          console.error("❌ Error in trackUnsubscribed handler:", error);
+        }
+      };
+
+      room.on('trackSubscribed', handleTrackSubscribed);
+      room.on('trackUnsubscribed', handleTrackUnsubscribed);
+
+      return () => {
+        room.off('trackSubscribed', handleTrackSubscribed);
+        room.off('trackUnsubscribed', handleTrackUnsubscribed);
+      };
+    }
+  }, [room]);
+
+  return null; // This component does not render anything
+}
+
 export default function TutorSessionPage() {
   const { user } = useUser()
   const [connectionData, setConnectionData] = useState<{ token: string; wsUrl: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [room, setRoom] = useState<Room | undefined>(undefined)
 
   useEffect(() => {
     const connectToLiveKit = async () => {
@@ -688,15 +740,6 @@ export default function TutorSessionPage() {
     connectToLiveKit()
   }, [user])
 
-  // Cleanup function for room listeners
-  useEffect(() => {
-    return () => {
-      if (typeof window !== 'undefined' && window.cleanupRoomListeners) {
-        window.cleanupRoomListeners();
-      }
-    }
-  }, [])
-
   // Show error state if there's an error
   if (error) {
     return (
@@ -725,98 +768,20 @@ export default function TutorSessionPage() {
       serverUrl={connectionData?.wsUrl || ""}
       data-lk-theme="default"
       style={{ height: "100vh" }}
-      onConnected={() => {
-        // The room instance is available via useRoomContext or useRoom hook inside LiveKitRoom children
-        setRoom(window.lkRoom); // Assuming lkRoom is set in the global window object in the TutorSessionContent component
-
-        console.log("🎉 LiveKit Room: Successfully connected to room!");
-        console.log("🤖 LiveKit Cloud Agent: Waiting for agent to auto-join...");
-        
-        // Safe property access with null checks
-        const audioContextInfo = {
-          canPlayAudio: window.lkRoom?.canPlaybackAudio,
-          audioContext: 'not available'
-        };
-        console.log("🎵 Room Audio Context:", audioContextInfo);
-        
-        // Set up audio track event handlers with proper typing
-        const handleTrackSubscribed = (track: any, publication: any, participant: any) => {
-          try {
-            const trackInfo = {
-              trackKind: track?.kind,
-              trackSid: track?.sid,
-              participant: participant?.identity,
-              isAgent: participant?.identity !== window.lkRoom?.localParticipant?.identity,
-              isEnabled: track?.isEnabled,
-              isMuted: track?.isMuted
-            };
-            console.log("🎵 Track Subscribed:", trackInfo);
-            
-            if (track?.kind === 'audio' && participant?.identity !== window.lkRoom?.localParticipant?.identity) {
-              console.log("🎉 Agent Audio Track Subscribed!");
-              console.log("🎵 Audio Track Details:", {
-                trackSid: track.sid,
-                isEnabled: track.isEnabled,
-                isMuted: track.isMuted,
-                mediaStreamTrack: track.mediaStreamTrack ? {
-                  readyState: track.mediaStreamTrack.readyState,
-                  label: track.mediaStreamTrack.label || 'no label'
-                } : 'no mediaStreamTrack'
-              });
-            }
-          } catch (error) {
-            console.error("❌ Error in trackSubscribed handler:", error);
-          }
-        };
-        
-        const handleTrackUnsubscribed = (track: any, publication: any, participant: any) => {
-          try {
-            console.log("🎵 Track Unsubscribed:", {
-              trackKind: track?.kind,
-              participant: participant?.identity
-            });
-          } catch (error) {
-            console.error("❌ Error in trackUnsubscribed handler:", error);
-          }
-        };
-        
-        // Add event listeners
-        window.lkRoom.on('trackSubscribed', handleTrackSubscribed);
-        window.lkRoom.on('trackUnsubscribed', handleTrackUnsubscribed);
-        
-        // Cleanup function to remove listeners
-        const cleanup = () => {
-          if (window.lkRoom) {
-            window.lkRoom.off('trackSubscribed', handleTrackSubscribed);
-            window.lkRoom.off('trackUnsubscribed', handleTrackUnsubscribed);
-          }
-          if (typeof window !== 'undefined') {
-            delete window.lkRoom;
-          }
-        };
-        
-        // Store cleanup function
-        window.cleanupRoomListeners = cleanup;
-      }}
       onDisconnected={(reason) => {
         console.log("👋 LiveKit Room: Disconnected from room");
         console.log("📝 Disconnect reason:", reason);
-        if (typeof window !== 'undefined') {
-          delete window.lkRoom;
-        }
       }}
       onError={(error) => {
         console.error("🚨 LiveKit Room: Connection error occurred");
         console.error("🚨 Error details:", error);
         console.error("🚨 Error message:", error.message);
-        if (typeof window !== 'undefined') {
-          delete window.lkRoom;
-        }
       }}
     >
-      <TutorSessionContent room={room} />
+      <TutorSessionContent room={undefined} />
       <RoomAudioRenderer />
       <StartAudio label="Click to enable audio" />
+      <LiveKitSetup />
     </LiveKitRoom>
   );
 }
