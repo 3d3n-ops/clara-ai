@@ -18,6 +18,7 @@ import {
   useRemoteParticipants,
   StartAudio,
   useLiveKitRoom,
+  useRoomContext,
 } from "@livekit/components-react" 
 import { Track, ConnectionState, Room } from "livekit-client"
 import "@livekit/components-styles"
@@ -85,10 +86,10 @@ function CodeBlock({ className, children, inline, ...props }: CodeBlockProps) {
 }
 
 interface TutorSessionContentProps {
-  room: Room | undefined;
+  // room: Room | undefined; // Room is now accessed via context
 }
 
-function TutorSessionContent({ room }: TutorSessionContentProps) {
+function TutorSessionContent(props: TutorSessionContentProps) {
   const [message, setMessage] = useState("")
   const [sessionFiles, setSessionFiles] = useState<any[]>([])
   const [isLoaded, setIsLoaded] = useState(false)
@@ -102,6 +103,7 @@ function TutorSessionContent({ room }: TutorSessionContentProps) {
   const [diagrams, setDiagrams] = useState<{ content: string }[]>([])
   const [mermaidLoaded, setMermaidLoaded] = useState(false)
   
+  const room = useRoomContext(); // Access room from context
   const data = useDataReceived(room);
 
   useEffect(() => {
@@ -625,7 +627,7 @@ function TutorSessionContent({ room }: TutorSessionContentProps) {
 }
 
 function LiveKitSetup() {
-  const { room } = useLiveKitRoom();
+  const room = useRoomContext();
 
   useEffect(() => {
     if (room) {
@@ -778,7 +780,7 @@ export default function TutorSessionPage() {
         console.error("🚨 Error message:", error.message);
       }}
     >
-      <TutorSessionContent room={undefined} />
+      <TutorSessionContent />
       <RoomAudioRenderer />
       <StartAudio label="Click to enable audio" />
       <LiveKitSetup />

@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
     // These are the verified environment variable names
     const apiKey = process.env.LIVEKIT_API_KEY
     const apiSecret = process.env.LIVEKIT_API_SECRET  
-    const livekitUrl = process.env.LIVEKIT_URL
+    const livekitUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL
 
     if (!apiKey || !apiSecret || !livekitUrl) {
       return NextResponse.json(
